@@ -188,6 +188,8 @@
   .tag.proj{background:#111;color:#fff;border-color:#111}
   .tag.kind{background:#eef0f2;color:#111;border-color:#dfe2e5}
   .tag.time{background:#fff;color:#111}
+  .tag.shared{background:#eaf4ff;color:#0b5a9e;border-color:#bcdcf4;text-transform:none;letter-spacing:0}
+  .item.shadow{background:#f7fbff}
 
   .projcard{
     border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0;background:#fff;
@@ -626,6 +628,14 @@ async function adminDeleteUser(username){
   return j;
 }
 
+/* ---------- /users (any authed user) ---------- */
+async function fetchUsersList(){
+  if(!sync.user) return [];
+  const res = await fetch(WORKER_URL + "/users", { headers: { "authorization": authHeader() }});
+  if(!res.ok) throw new Error("users list failed: "+res.status);
+  return (await res.json()).users || [];
+}
+
 /* ---------- View-as (admin feature, read-only) ---------- */
 async function enterViewAs(username){
   if(!sync.user || sync.user.role !== "admin") return;
@@ -1055,19 +1065,25 @@ function renderItems(items, opts={}){
     if(it.needsConfirmation) tags.push(`<span class="tag warn">Needs confirmation</span>`);
     if(kind==="todo" && !opts.showProject) tags.push(`<span class="tag kind">To-do</span>`);
     if(kind==="buy"  && !opts.showProject) tags.push(`<span class="tag kind">To-buy</span>`);
+    const isShadow = !!it.sharedFrom;
+    const isSharedByMe = !isShadow && Array.isArray(it.sharedWith) && it.sharedWith.length > 0;
+    if(isShadow) tags.push(`<span class="tag shared">From ${escapeHtml(it.sharedFrom)}</span>`);
+    if(isSharedByMe) tags.push(`<span class="tag shared">Shared with ${escapeHtml(it.sharedWith.join(", "))}</span>`);
+    const canShare = !isShadow && (kind==="schedule" || kind==="todo");
     const displayTitle = it._displayTitle || it.title;
-    return `<div class="item ${it.completed?"done":""}" data-id="${it.id}" data-kind="${kind}" data-proj="${projId}">
+    return `<div class="item ${it.completed?"done":""} ${isShadow?"shadow":""}" data-id="${it.id}" data-kind="${kind}" data-proj="${projId}">
       <div class="check" role="checkbox" aria-checked="${it.completed?"true":"false"}" tabindex="0" data-act="toggle"></div>
       <div class="body">
         <div class="title">${escapeHtml(displayTitle)}</div>
         <div class="meta">
           ${tags.join(" ")}
           <span class="row-actions">
-            <button class="ghost" data-act="edit">Edit</button>
-            ${it.needsConfirmation
+            ${isShadow ? "" : `<button class="ghost" data-act="edit">Edit</button>`}
+            ${isShadow ? "" : (it.needsConfirmation
               ? `<button class="ghost" data-act="confirm">Confirm</button>`
-              : `<button class="ghost" data-act="needs">Needs confirm</button>`}
-            <button class="ghost danger" data-act="delete">Delete</button>
+              : `<button class="ghost" data-act="needs">Needs confirm</button>`)}
+            ${canShare ? `<button class="ghost" data-act="share">${isSharedByMe?"Sharing…":"Share"}</button>` : ""}
+            ${isShadow ? "" : `<button class="ghost danger" data-act="delete">Delete</button>`}
           </span>
         </div>
       </div>
@@ -1106,6 +1122,8 @@ function bindItemEvents(){
           save(); render();
         } else if(act==="edit"){
           openEditItemModal(proj, kind, it);
+        } else if(act==="share"){
+          openShareModal(proj, kind, it);
         }
       });
       btn.addEventListener("keydown", e=>{
@@ -1199,6 +1217,58 @@ function openEditItemModal(proj, kind, it){
     newArr.push(newItem);
     save(); close(); render();
     toast("Updated.");
+  });
+}
+
+/* ---------- Share-item modal ---------- */
+function openShareModal(proj, kind, it){
+  const host = document.getElementById("modalHost");
+  const current = new Set(Array.isArray(it.sharedWith) ? it.sharedWith : []);
+  host.innerHTML = `
+    <div class="modal-backdrop" id="shareBack">
+      <div class="modal" role="dialog" aria-modal="true">
+        <h3>Share item</h3>
+        <div class="sub" style="margin-bottom:10px">${escapeHtml(it.title||"")}</div>
+        <div id="shareList" style="margin:8px 0;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px">
+          <div class="empty">Loading users…</div>
+        </div>
+        <div class="hint" style="font-size:12px;color:var(--muted);margin-top:6px">
+          Recipients see this item in their same-named project. They can mark it complete, but only you can edit it.
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button id="sCancel">Cancel</button>
+          <button id="sSave" class="primary">Save</button>
+        </div>
+      </div>
+    </div>`;
+  const close = ()=>{ host.innerHTML = ""; };
+  document.getElementById("sCancel").addEventListener("click", close);
+  document.getElementById("shareBack").addEventListener("click", e=>{ if(e.target.id==="shareBack") close(); });
+  document.getElementById("sSave").addEventListener("click", ()=>{
+    const selected = [...document.querySelectorAll("#shareList input[type=checkbox]:checked")].map(c=>c.value);
+    if(selected.length) it.sharedWith = selected;
+    else delete it.sharedWith;
+    save(); close(); render();
+    toast(selected.length ? `Shared with ${selected.length}.` : "Stopped sharing.");
+  });
+  fetchUsersList().then(users=>{
+    const me = sync.user ? sync.user.username : "";
+    const others = users.filter(u=>u !== me);
+    const list = document.getElementById("shareList");
+    if(!list) return;
+    if(!others.length){
+      list.innerHTML = `<div class="empty">No other users yet.</div>`;
+      return;
+    }
+    list.innerHTML = others.map(u=>
+      `<label style="display:flex;gap:8px;align-items:center;padding:8px 2px;cursor:pointer;border-bottom:1px solid var(--line)">
+        <input type="checkbox" value="${escapeHtml(u)}" ${current.has(u)?"checked":""} />
+        <span>${escapeHtml(u)}</span>
+      </label>`
+    ).join("");
+  }).catch(()=>{
+    const list = document.getElementById("shareList");
+    if(list) list.innerHTML = `<div class="empty">Failed to load users. Check your connection.</div>`;
   });
 }
 
