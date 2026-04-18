@@ -893,6 +893,8 @@ function renderToday(){
   const items = collectScheduleByDate([t]);
   const overdue = collectOverdue();
   const needsConfirm = collectNeedsConfirmActive();
+  const todos = collectOpenTodos();
+  const toBuy = collectOpenToBuy();
   let html = `<div class="h1">Today · ${fmtLong(t)}</div>`;
   if(overdue.length){
     html += `<div class="h2" style="color:var(--danger)">Overdue</div>`;
@@ -903,6 +905,14 @@ function renderToday(){
   if(needsConfirm.length){
     html += `<div class="h2">Awaiting confirmation</div>`;
     html += renderItems(needsConfirm, {showProject:true, showDate:true});
+  }
+  if(todos.length){
+    html += `<div class="h2">To-do</div>`;
+    html += renderItems(todos, {showProject:true});
+  }
+  if(toBuy.length){
+    html += `<div class="h2">To-buy</div>`;
+    html += renderItems(toBuy, {showProject:true, flat:true});
   }
   app.innerHTML = html;
   bindItemEvents();
@@ -1289,6 +1299,24 @@ function collectOverdue(){
   for(const p of state.projects){
     for(const it of p.schedule){
       if(!it.completed && it.date < t) out.push({...it, _projId:p.id, _kind:"schedule"});
+    }
+  }
+  return out;
+}
+function collectOpenTodos(){
+  const out=[];
+  for(const p of state.projects){
+    for(const it of p.todos){
+      if(!it.completed) out.push({...it, _projId:p.id, _kind:"todo"});
+    }
+  }
+  return out;
+}
+function collectOpenToBuy(){
+  const out=[];
+  for(const p of state.projects){
+    for(const b of p.toBuy){
+      if(!b.completed) out.push({...b, _projId:p.id, _kind:"buy", _displayTitle:(b.qty?`${b.qty}× `:"")+b.title});
     }
   }
   return out;
