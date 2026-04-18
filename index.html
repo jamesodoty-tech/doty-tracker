@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#111111" />
+<title>DOTY Project Tracker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23111'/%3E%3Ctext x='50' y='66' font-family='Arial Black,Arial,sans-serif' font-size='52' font-weight='900' text-anchor='middle' fill='%23ff7a00'%3ED%3C/text%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bg:#ffffff;
+    --ink:#0a0a0a;
+    --muted:#5b5b5b;
+    --line:#dcdcdc;
+    --line-strong:#222;
+    --card:#fafafa;
+    --accent:#ff6a00;
+    --accent-ink:#ffffff;
+    --warn-bg:#fff4c2;
+    --warn-ink:#5a4500;
+    --warn-line:#e6c64d;
+    --done:#7a7a7a;
+    --danger:#b00020;
+    --safe:#0c7a3b;
+    --tap:48px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,Arial,sans-serif;
+    font-size:16px;line-height:1.35;-webkit-text-size-adjust:100%;}
+  body{padding-bottom:calc(140px + env(safe-area-inset-bottom));}
+  button{font:inherit;color:inherit}
+  input,textarea,select{font:inherit;color:inherit}
+  a{color:var(--ink)}
+
+  header.appbar{
+    position:sticky;top:0;z-index:50;
+    background:var(--ink);color:#fff;
+    padding:10px 14px calc(10px + env(safe-area-inset-top));
+    display:flex;align-items:center;gap:10px;
+    border-bottom:2px solid var(--accent);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em}
+  .brand .mark{
+    width:30px;height:30px;border-radius:7px;background:var(--accent);
+    display:grid;place-items:center;color:#111;font-weight:900;font-size:18px;
+  }
+  .brand small{font-weight:500;opacity:.7;margin-left:6px;font-size:12px}
+  .spacer{flex:1}
+  .iconbtn{
+    background:transparent;color:#fff;border:1px solid #444;border-radius:10px;
+    min-width:var(--tap);min-height:var(--tap);padding:0 12px;font-weight:600;
+  }
+  .iconbtn.primary{background:var(--accent);border-color:var(--accent);color:#111}
+
+  nav.tabs{
+    position:sticky;top:0;z-index:40;
+    display:grid;grid-template-columns:repeat(3,1fr);
+    background:#fff;border-bottom:1px solid var(--line);
+  }
+  nav.tabs button{
+    background:#fff;border:0;padding:14px 6px;font-weight:700;font-size:15px;
+    border-bottom:3px solid transparent;color:#444;
+  }
+  nav.tabs button.active{color:var(--ink);border-color:var(--accent)}
+
+  main{padding:14px 14px 8px}
+  .h1{font-size:22px;font-weight:800;margin:6px 0 10px}
+  .h2{font-size:16px;font-weight:800;margin:18px 0 8px;letter-spacing:.02em;text-transform:uppercase;color:#222}
+  .sub{color:var(--muted);font-size:13px}
+
+  .datehead{
+    margin:14px 0 6px;font-weight:800;font-size:15px;
+    border-bottom:1px solid var(--line);padding-bottom:4px;
+    display:flex;align-items:baseline;gap:8px;
+  }
+  .datehead .rel{font-weight:600;color:var(--muted);font-size:12px}
+
+  .item{
+    display:flex;align-items:flex-start;gap:10px;
+    padding:12px 10px;border:1px solid var(--line);border-radius:12px;
+    background:var(--card);margin:8px 0;
+  }
+  .item .check{
+    flex:0 0 auto;width:28px;height:28px;border:2px solid var(--ink);border-radius:8px;
+    display:grid;place-items:center;background:#fff;cursor:pointer;
+  }
+  .item .check[aria-checked="true"]{background:var(--ink);color:#fff}
+  .item .check[aria-checked="true"]::after{content:"✓";font-weight:900}
+  .item .body{flex:1;min-width:0}
+  .item .title{font-weight:600;word-wrap:break-word;overflow-wrap:anywhere}
+  .item .meta{font-size:12px;color:var(--muted);margin-top:2px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .item.done .title{text-decoration:line-through;color:var(--done)}
+  .item .row-actions{display:flex;gap:4px}
+  .ghost{
+    background:transparent;border:1px solid var(--line);border-radius:8px;
+    padding:6px 8px;font-size:12px;min-height:32px;
+  }
+  .ghost.danger{color:var(--danger);border-color:#f1c1c8}
+  .tag{
+    display:inline-flex;align-items:center;gap:4px;
+    padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;
+    border:1px solid var(--line);background:#fff;color:#333;text-transform:uppercase;letter-spacing:.04em;
+  }
+  .tag.warn{background:var(--warn-bg);color:var(--warn-ink);border-color:var(--warn-line)}
+  .tag.proj{background:#111;color:#fff;border-color:#111}
+  .tag.kind{background:#eef0f2;color:#111;border-color:#dfe2e5}
+  .tag.time{background:#fff;color:#111}
+
+  .projcard{
+    border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0;background:#fff;
+  }
+  .projcard h3{margin:0 0 4px;font-size:18px}
+  .projcard .meta{color:var(--muted);font-size:13px;margin-bottom:8px}
+  .projcard .stats{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .projcard .stats .tag{cursor:default}
+  .projcard.deadline-soon{border-color:var(--accent)}
+
+  .add-section{
+    border:1px dashed var(--line);border-radius:12px;padding:10px;margin:8px 0 4px;
+    display:flex;flex-direction:column;gap:8px;background:#fff;
+  }
+  .add-section .row{display:flex;gap:8px;flex-wrap:wrap}
+  .add-section input[type=text],
+  .add-section input[type=date],
+  .add-section input[type=time],
+  .add-section input[type=number],
+  .add-section textarea,
+  .add-section select{
+    flex:1;min-width:0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff;
+  }
+  .add-section button{
+    min-height:var(--tap);padding:0 14px;border-radius:10px;border:1px solid var(--ink);
+    background:var(--ink);color:#fff;font-weight:700;
+  }
+  .add-section label.inline{display:flex;align-items:center;gap:6px;font-size:13px;color:#333}
+  .add-section .hint{font-size:12px;color:var(--muted)}
+
+  details.proj-section{
+    border:1px solid var(--line);border-radius:12px;padding:0;margin:10px 0;background:#fff;overflow:hidden;
+  }
+  details.proj-section > summary{
+    list-style:none;cursor:pointer;
+    padding:14px;font-weight:800;display:flex;align-items:center;gap:8px;
+  }
+  details.proj-section > summary::-webkit-details-marker{display:none}
+  details.proj-section > summary::after{content:"▾";margin-left:auto;color:#888;font-size:14px;transition:transform .15s}
+  details.proj-section[open] > summary::after{transform:rotate(180deg)}
+  details.proj-section .body{padding:0 14px 14px}
+
+  .quickbar{
+    position:fixed;left:0;right:0;bottom:0;z-index:60;
+    background:#fff;border-top:1px solid var(--line);
+    padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+    display:flex;gap:8px;align-items:center;
+    box-shadow:0 -4px 16px rgba(0,0,0,.06);
+  }
+  .quickbar input{
+    flex:1;min-width:0;padding:14px;border-radius:12px;border:1px solid var(--line);
+    background:#fff;font-size:16px;
+  }
+  .quickbar button{
+    min-height:var(--tap);min-width:var(--tap);padding:0 14px;border-radius:12px;
+    border:1px solid var(--ink);background:var(--ink);color:#fff;font-weight:800;
+  }
+  .quickbar button.alt{background:var(--accent);border-color:var(--accent);color:#111}
+
+  .punchlist{
+    position:fixed;inset:0;z-index:90;background:#fff;display:flex;flex-direction:column;
+  }
+  .punchlist header{
+    padding:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;
+    background:var(--ink);color:#fff;
+  }
+  .punchlist header .title{font-weight:800;font-size:18px}
+  .punchlist .scroll{overflow:auto;padding:14px 16px 24px;font-size:17px;line-height:1.45}
+  .punchlist h4{margin:18px 0 6px;font-size:15px;text-transform:uppercase;letter-spacing:.05em;color:#444}
+  .punchlist ul{padding-left:22px;margin:6px 0 14px}
+  .punchlist li{margin:6px 0}
+  .punchlist .pill{font-size:11px;padding:2px 6px;border-radius:6px;background:#111;color:#fff;margin-right:6px;text-transform:uppercase;letter-spacing:.04em}
+  .punchlist .needs{background:#f0c000;color:#111}
+  .empty{color:var(--muted);font-style:italic;padding:18px 0;text-align:center}
+
+  .toast{
+    position:fixed;left:50%;bottom:120px;transform:translateX(-50%);
+    background:#111;color:#fff;padding:10px 14px;border-radius:10px;font-size:14px;
+    z-index:100;opacity:0;transition:opacity .15s;
+    max-width:90vw;text-align:center;
+  }
+  .toast.show{opacity:1}
+
+  textarea.notes{
+    width:100%;min-height:120px;padding:10px;border:1px solid var(--line);
+    border-radius:10px;background:#fff;resize:vertical;
+  }
+
+  .delete-proj{margin-top:14px;color:var(--danger);background:#fff;border:1px solid #f1c1c8;border-radius:10px;padding:10px;width:100%}
+
+  @media (min-width:720px){
+    main{max-width:780px;margin:0 auto}
+    .quickbar > div.inner{max-width:780px;margin:0 auto;display:flex;gap:8px;width:100%}
+  }
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="brand">
+    <div class="mark">D</div>
+    <div>DOTY <small>Project Tracker</small></div>
+  </div>
+  <div class="spacer"></div>
+  <button class="iconbtn primary" id="punchBtn" title="Run punchlist">Punch</button>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-view="today" class="active">Today</button>
+  <button data-view="week">Week</button>
+  <button data-view="projects">Projects</button>
+</nav>
+
+<main id="app"></main>
+
+<div class="quickbar">
+  <div class="inner" style="display:flex;gap:8px;flex:1">
+    <input id="quickAdd" type="text" placeholder='Quick-add: "9 Jerome: wallpaper guy Thu 9am"' autocomplete="off" />
+    <button id="quickGo" title="Add">Add</button>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   DOTY Project Tracker — single-file app
+   Storage: localStorage key STORE_KEY
+   ============================================================ */
+const STORE_KEY = "doty.tracker.v1";
+const ARCHIVE_AFTER_HOURS = 24;
+
+/* ---------- Date helpers ---------- */
+const DAY_MS = 86400000;
+function todayISO(d=new Date()){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function parseISO(s){ const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); }
+function fmtLong(iso){
+  const d=parseISO(iso);
+  return d.toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
+}
+function fmtShort(iso){
+  const d=parseISO(iso);
+  return d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+}
+function relLabel(iso){
+  const t=todayISO(); const tomorrow=todayISO(new Date(Date.now()+DAY_MS));
+  if(iso===t) return "Today";
+  if(iso===tomorrow) return "Tomorrow";
+  const diff=Math.round((parseISO(iso)-parseISO(t))/DAY_MS);
+  if(diff>1 && diff<=7) return `In ${diff} days`;
+  if(diff<0 && diff>=-7) return `${-diff} day${diff===-1?"":"s"} ago`;
+  return "";
+}
+function fmtTime12(t){
+  if(!t) return "";
+  const [hh,mm]=t.split(":").map(Number);
+  const h12=((hh+11)%12)+1; const ap=hh<12?"am":"pm";
+  return mm? `${h12}:${String(mm).padStart(2,"0")}${ap}` : `${h12}${ap}`;
+}
+
+/* ---------- ID ---------- */
+function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); }
+
+/* ---------- Storage / seed ---------- */
+function load(){
+  try{
+    const raw=localStorage.getItem(STORE_KEY);
+    if(!raw) return seed();
+    const parsed=JSON.parse(raw);
+    if(!parsed.projects) return seed();
+    return parsed;
+  }catch(e){ console.warn("load failed, seeding",e); return seed(); }
+}
+function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+
+function seed(){
+  // Dates per spec (April 2026)
+  const p1 = {
+    id: uid(), name: "9 Jerome", deadline: "2026-04-30",
+    notes: "Painters currently on site.",
+    schedule: [
+      sItem("Painters on site", "2026-04-17"),
+      sItem("Install ensuite door handle", "2026-04-20"),
+      sItem("Install kitchen piece (before countertops)", "2026-04-20"),
+      sItem("Hardware installation begins (all hardware ordered)", "2026-04-20"),
+      sItem("Electricians — panel upgrade", "2026-04-21"),
+      sItem("Kitchen countertop installation", "2026-04-22"),
+      sItem("Wallpaper installer", "2026-04-23", "09:00"),
+      sItem("Cleaners (Sean scheduling)", "2026-04-28", null, true),
+      sItem("Photos", "2026-04-29"),
+    ],
+    todos: [],
+    toBuy: [
+      { id:uid(), title:"Chrome glass shower door kit", qty:2, completed:false }
+    ],
+  };
+  const p2 = {
+    id: uid(), name: "Newkid", deadline: null, notes: "",
+    schedule: [
+      sItem("1pm meeting — arrive by noon, bring iPad", "2026-04-17", "13:00"),
+      sItem("Electricians on site", "2026-04-22"),
+    ],
+    todos: [
+      tItem("Talk to HVAC guy about changes"),
+      tItem("Hook up WC"),
+    ],
+    toBuy: [],
+  };
+  const p3 = {
+    id: uid(), name: "Delaware", deadline: "2026-07-15",
+    notes:
+      "238 Delaware Ave. Slab-on-grade foundation build, currently in forming stage.\n"+
+      "Crew: Hayes, Ray, Moses, Dave, Tyler.\n"+
+      "Projected completion: mid-July.\n"+
+      "monday.com — main board: 18403633549, subitems: 18403633551, workspace: 14648908.",
+    schedule: [
+      sItem("Site check-in with crew", "2026-04-20"),
+    ],
+    todos: [],
+    toBuy: [],
+  };
+  const data = { projects:[p1,p2,p3], view:"today", initialized:true };
+  localStorage.setItem(STORE_KEY, JSON.stringify(data));
+  return data;
+}
+function sItem(title,date,time=null,needs=false){
+  return { id:uid(), title, date, time, needsConfirmation:needs, completed:false, completedAt:null };
+}
+function tItem(title,needs=false){
+  return { id:uid(), title, needsConfirmation:needs, completed:false, completedAt:null };
+}
+
+/* ---------- State ---------- */
+let state = load();
+let view = state.view || "today";
+let openProjectId = null;
+
+/* ---------- Auto-archive ---------- */
+function archiveSweep(){
+  const cutoff = Date.now() - ARCHIVE_AFTER_HOURS*3600*1000;
+  let changed=false;
+  for(const p of state.projects){
+    const pre = (p.schedule.length+p.todos.length+p.toBuy.length);
+    p.schedule = p.schedule.filter(x => !(x.completed && x.completedAt && x.completedAt < cutoff));
+    p.todos    = p.todos.filter(x => !(x.completed && x.completedAt && x.completedAt < cutoff));
+    p.toBuy    = p.toBuy.filter(x => !(x.completed && x.completedAt && x.completedAt < cutoff));
+    if(pre !== (p.schedule.length+p.todos.length+p.toBuy.length)) changed=true;
+  }
+  if(changed) save();
+}
+
+/* ---------- Quick-add parser ----------
+   Examples it understands:
+     "9 Jerome: wallpaper guy Thu 9am"
+     "Newkid: meet HVAC tomorrow 2pm"
+     "Delaware: rent compactor Apr 24"
+     "Jerome todo: order tile spacers"
+     "Jerome buy: 2 boxes screws"
+     "leaving for work"  -> triggers punchlist
+*/
+const DAY_NAMES = ["sun","mon","tue","tues","wed","thu","thur","thurs","fri","sat"];
+const DAY_INDEX = {sun:0,mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5,sat:6};
+const MONTH_NAMES = ["jan","feb","mar","apr","may","jun","jul","aug","sep","sept","oct","nov","dec"];
+const MONTH_INDEX = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,sept:8,oct:9,nov:10,dec:11};
+
+function nextDow(targetDow, from=new Date()){
+  const d = new Date(from); d.setHours(0,0,0,0);
+  const cur = d.getDay();
+  let diff = (targetDow - cur + 7) % 7;
+  if(diff===0) diff = 7; // "Thu" said today on Thursday → next Thursday
+  d.setDate(d.getDate()+diff);
+  return d;
+}
+function parseDateTokens(text){
+  // Returns {date, time, leftover} where leftover has tokens removed.
+  // Supports: today, tonight, tomorrow, mon..sun, "next mon", "Apr 23", "23 Apr",
+  // "4/23" or "4-23", and times "9am" "9:30am" "13:00" "9pm".
+  let leftover = " "+text+" ";
+  let date=null, time=null;
+
+  // ISO yyyy-mm-dd
+  let m = leftover.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if(m){ date = `${m[1]}-${String(+m[2]).padStart(2,"0")}-${String(+m[3]).padStart(2,"0")}`; leftover = leftover.replace(m[0]," "); }
+
+  // M/D or M-D (assume current year)
+  if(!date){
+    m = leftover.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/);
+    if(m){
+      const yr = m[3] ? (m[3].length===2 ? 2000+ +m[3] : +m[3]) : new Date().getFullYear();
+      date = `${yr}-${String(+m[1]).padStart(2,"0")}-${String(+m[2]).padStart(2,"0")}`;
+      leftover = leftover.replace(m[0]," ");
+    }
+  }
+
+  // Month name + day  (Apr 23 / 23 Apr)
+  if(!date){
+    const monthRe = new RegExp("\\b("+MONTH_NAMES.join("|")+")\\.?\\s+(\\d{1,2})(?:,?\\s+(\\d{4}))?\\b","i");
+    m = leftover.match(monthRe);
+    if(m){
+      const yr = m[3] ? +m[3] : new Date().getFullYear();
+      date = `${yr}-${String(MONTH_INDEX[m[1].toLowerCase()]+1).padStart(2,"0")}-${String(+m[2]).padStart(2,"0")}`;
+      leftover = leftover.replace(m[0]," ");
+    } else {
+      const monthRe2 = new RegExp("\\b(\\d{1,2})\\s+("+MONTH_NAMES.join("|")+")\\.?\\b","i");
+      m = leftover.match(monthRe2);
+      if(m){
+        date = `${new Date().getFullYear()}-${String(MONTH_INDEX[m[2].toLowerCase()]+1).padStart(2,"0")}-${String(+m[1]).padStart(2,"0")}`;
+        leftover = leftover.replace(m[0]," ");
+      }
+    }
+  }
+
+  // today / tomorrow / tonight
+  if(!date){
+    if(/\btoday\b/i.test(leftover)){ date = todayISO(); leftover = leftover.replace(/\btoday\b/i," "); }
+    else if(/\btonight\b/i.test(leftover)){ date = todayISO(); leftover = leftover.replace(/\btonight\b/i," "); }
+    else if(/\btomorrow\b/i.test(leftover)){
+      date = todayISO(new Date(Date.now()+DAY_MS)); leftover = leftover.replace(/\btomorrow\b/i," ");
+    }
+  }
+
+  // weekday (with optional "next ")
+  if(!date){
+    const dowRe = new RegExp("\\b(next\\s+)?("+DAY_NAMES.join("|")+")\\b","i");
+    m = leftover.match(dowRe);
+    if(m){
+      const d = nextDow(DAY_INDEX[m[2].toLowerCase()]);
+      date = todayISO(d);
+      leftover = leftover.replace(m[0]," ");
+    }
+  }
+
+  // Time: 9am, 9:30am, 9pm, 13:00
+  m = leftover.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if(m){
+    let h=+m[1]; const mm=m[2]?+m[2]:0; const ap=m[3].toLowerCase();
+    if(ap==="pm" && h<12) h+=12;
+    if(ap==="am" && h===12) h=0;
+    time = `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;
+    leftover = leftover.replace(m[0]," ");
+  } else {
+    m = leftover.match(/\b(\d{1,2}):(\d{2})\b/);
+    if(m){
+      time = `${String(+m[1]).padStart(2,"0")}:${m[2]}`;
+      leftover = leftover.replace(m[0]," ");
+    }
+  }
+
+  return { date, time, leftover: leftover.replace(/\s+/g," ").trim() };
+}
+
+function findProjectByPrefix(name){
+  if(!name) return null;
+  const n = name.trim().toLowerCase();
+  // exact match
+  let p = state.projects.find(p => p.name.toLowerCase() === n);
+  if(p) return p;
+  // startsWith
+  p = state.projects.find(p => p.name.toLowerCase().startsWith(n) || n.startsWith(p.name.toLowerCase()));
+  if(p) return p;
+  // contains either way
+  p = state.projects.find(p => p.name.toLowerCase().includes(n) || n.includes(p.name.toLowerCase()));
+  if(p) return p;
+  // token overlap (e.g. "9 Jerome" matches "Jerome")
+  const tokens = n.split(/\s+/).filter(Boolean);
+  p = state.projects.find(p => {
+    const pn = p.name.toLowerCase();
+    return tokens.some(t => t.length>2 && pn.includes(t));
+  });
+  return p || null;
+}
+
+function quickAdd(text){
+  const raw = text.trim();
+  if(!raw) return false;
+
+  if(/^leaving for work\b/i.test(raw) || /^punch(list)?$/i.test(raw)){
+    showPunchlist(); return true;
+  }
+
+  // Split on first colon for "Project: rest"
+  let projName=null, rest=raw, kind="schedule", needs=false;
+  const colonIdx = raw.indexOf(":");
+  if(colonIdx > 0){
+    projName = raw.slice(0,colonIdx).trim();
+    rest = raw.slice(colonIdx+1).trim();
+  }
+
+  // Detect "todo" / "buy" markers in either projName tail or rest head
+  const kindRe = /\b(todo|to-do|to do|buy|to-buy|to buy|note)\b/i;
+  let km = projName && projName.match(kindRe);
+  if(km){
+    kind = normalizeKind(km[1]);
+    projName = projName.replace(kindRe,"").trim();
+  } else {
+    km = rest.match(kindRe);
+    if(km && rest.toLowerCase().indexOf(km[0].toLowerCase()) < 8){
+      kind = normalizeKind(km[1]);
+      rest = rest.replace(kindRe,"").trim();
+    }
+  }
+
+  // needs confirmation flag
+  if(/\?(\s|$)/.test(rest) || /\bneeds?\s+confirm(ation)?\b/i.test(rest) || /\bunconfirmed\b/i.test(rest) || /\btbc\b/i.test(rest)){
+    needs = true;
+    rest = rest.replace(/\bneeds?\s+confirm(ation)?\b/ig,"")
+               .replace(/\bunconfirmed\b/ig,"")
+               .replace(/\btbc\b/ig,"")
+               .replace(/\?(\s|$)/g," ")
+               .replace(/\s+/g," ").trim();
+  }
+
+  // Find project
+  let proj = projName ? findProjectByPrefix(projName) : null;
+  if(!proj){
+    // Try to detect leading project name without colon (e.g. "Jerome wallpaper Thu 9am")
+    for(const p of state.projects){
+      const re = new RegExp("^"+p.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b","i");
+      if(re.test(rest)){
+        proj = p;
+        rest = rest.replace(re,"").trim();
+        break;
+      }
+    }
+  }
+  if(!proj){
+    toast("Couldn't match a project. Try `Project: item ...`");
+    return false;
+  }
+
+  // Parse date/time from leftover
+  const dt = parseDateTokens(rest);
+  let title = dt.leftover;
+  // Strip leading hyphens/colons/dashes
+  title = title.replace(/^[\-:•·]+\s*/,"").trim();
+  if(!title){ toast("Need an item description."); return false; }
+
+  if(kind==="schedule"){
+    if(!dt.date){
+      // No date supplied → treat as todo on that project
+      proj.todos.push(tItem(title, needs));
+      toast(`Added to ${proj.name} to-do (no date supplied)`);
+    } else {
+      proj.schedule.push(sItem(title, dt.date, dt.time, needs));
+      toast(`Added to ${proj.name} on ${fmtShort(dt.date)}${dt.time?" "+fmtTime12(dt.time):""}`);
+    }
+  } else if(kind==="todo"){
+    proj.todos.push(tItem(title, needs));
+    toast(`Added to ${proj.name} to-do`);
+  } else if(kind==="buy"){
+    proj.toBuy.push({ id:uid(), title, qty:null, completed:false, needsConfirmation:needs });
+    toast(`Added to ${proj.name} to-buy`);
+  } else if(kind==="note"){
+    proj.notes = (proj.notes? proj.notes+"\n":"") + title;
+    toast(`Note appended to ${proj.name}`);
+  }
+
+  save();
+  render();
+  return true;
+}
+function normalizeKind(s){
+  s = s.toLowerCase();
+  if(s.includes("buy")) return "buy";
+  if(s.includes("note")) return "note";
+  return "todo";
+}
+
+/* ---------- Toast ---------- */
+let toastTimer=null;
+function toast(msg){
+  const el=document.getElementById("toast");
+  el.textContent=msg; el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove("show"),2400);
+}
+
+/* ---------- Rendering ---------- */
+const app = document.getElementById("app");
+
+function render(){
+  archiveSweep();
+  state.view = view; save();
+  document.querySelectorAll("nav.tabs button").forEach(b=>{
+    b.classList.toggle("active", b.dataset.view===view && !openProjectId);
+  });
+  if(openProjectId){
+    const p = state.projects.find(p=>p.id===openProjectId);
+    if(p) return renderProject(p);
+    openProjectId=null;
+  }
+  if(view==="today") renderToday();
+  else if(view==="week") renderWeek();
+  else renderProjects();
+}
+
+function renderToday(){
+  const t = todayISO();
+  const items = collectScheduleByDate([t]);
+  const overdue = collectOverdue();
+  const needsConfirm = collectNeedsConfirmActive();
+  let html = `<div class="h1">Today · ${fmtLong(t)}</div>`;
+  if(overdue.length){
+    html += `<div class="h2" style="color:var(--danger)">Overdue</div>`;
+    html += renderItems(overdue, {showProject:true, showDate:true});
+  }
+  html += `<div class="h2">Today</div>`;
+  html += items.length ? renderItems(items, {showProject:true}) : `<div class="empty">Nothing scheduled today.</div>`;
+
+  // Standing to-dos due-ish? Just show needs-confirmation
+  if(needsConfirm.length){
+    html += `<div class="h2">Awaiting confirmation</div>`;
+    html += renderItems(needsConfirm, {showProject:true, showDate:true});
+  }
+
+  app.innerHTML = html;
+  bindItemEvents();
+}
+
+function renderWeek(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const days = [];
+  for(let i=0;i<7;i++){
+    const d=new Date(today.getTime()+i*DAY_MS);
+    days.push(todayISO(d));
+  }
+  let html = `<div class="h1">Next 7 days</div>`;
+  let any=false;
+  for(const iso of days){
+    const items = collectScheduleByDate([iso]);
+    if(!items.length) continue;
+    any=true;
+    html += `<div class="datehead">${fmtLong(iso)} <span class="rel">${relLabel(iso)||""}</span></div>`;
+    html += renderItems(items, {showProject:true});
+  }
+  if(!any) html += `<div class="empty">No scheduled items in the next 7 days.</div>`;
+  app.innerHTML = html;
+  bindItemEvents();
+}
+
+function renderProjects(){
+  let html = `<div class="h1">Projects</div>`;
+  html += `<div class="add-section">
+    <div class="row">
+      <input type="text" id="newProjName" placeholder="New project name" />
+      <input type="date" id="newProjDeadline" />
+      <button id="newProjBtn">Add project</button>
+    </div>
+    <div class="hint">Tip: tap a project to open its full page.</div>
+  </div>`;
+  for(const p of state.projects){
+    const counts = projectCounts(p);
+    const dlClass = isDeadlineSoon(p.deadline) ? " deadline-soon":"";
+    html += `<div class="projcard${dlClass}" data-open="${p.id}">
+      <h3>${escapeHtml(p.name)}</h3>
+      <div class="meta">
+        ${p.deadline?`Deadline: <strong>${fmtLong(p.deadline)}</strong> · ${daysUntil(p.deadline)}`:`No deadline`}
+      </div>
+      <div class="stats">
+        <span class="tag">${counts.today} today</span>
+        <span class="tag">${counts.upcoming} upcoming</span>
+        <span class="tag">${counts.todos} to-do</span>
+        <span class="tag">${counts.toBuy} to-buy</span>
+        ${counts.needs? `<span class="tag warn">${counts.needs} needs confirm</span>`:``}
+      </div>
+    </div>`;
+  }
+  app.innerHTML = html;
+  app.querySelectorAll(".projcard[data-open]").forEach(card=>{
+    card.addEventListener("click", ()=>{ openProjectId = card.dataset.open; render(); window.scrollTo(0,0); });
+  });
+  document.getElementById("newProjBtn").addEventListener("click",()=>{
+    const name = document.getElementById("newProjName").value.trim();
+    const dl = document.getElementById("newProjDeadline").value || null;
+    if(!name){ toast("Project name required."); return; }
+    state.projects.push({ id:uid(), name, deadline:dl, notes:"", schedule:[], todos:[], toBuy:[] });
+    save(); render();
+  });
+}
+
+function renderProject(p){
+  document.querySelectorAll("nav.tabs button").forEach(b=>b.classList.remove("active"));
+  const sched = [...p.schedule].sort(scheduleSort);
+  const todos = p.todos;
+  const buys = p.toBuy;
+  let html = `<div style="display:flex;align-items:center;gap:8px;margin:6px 0 4px">
+    <button class="ghost" id="backBtn">← All projects</button>
+    <div class="spacer" style="flex:1"></div>
+  </div>`;
+  html += `<div class="h1">${escapeHtml(p.name)}</div>`;
+  html += `<div class="sub">${p.deadline?`Deadline: <strong>${fmtLong(p.deadline)}</strong> · ${daysUntil(p.deadline)}`:`No deadline set`}</div>`;
+
+  // SCHEDULE
+  html += `<details class="proj-section" open><summary>Schedule (${sched.filter(x=>!x.completed).length})</summary><div class="body">`;
+  html += renderProjectSchedule(p, sched);
+  html += addScheduleForm(p);
+  html += `</div></details>`;
+
+  // TODO
+  html += `<details class="proj-section" open><summary>To-do (${todos.filter(x=>!x.completed).length})</summary><div class="body">`;
+  html += todos.length ? renderItems(todos.map(t=>({...t, _kind:"todo", _projId:p.id})), {flat:true}) : `<div class="empty">No to-dos.</div>`;
+  html += addTodoForm(p);
+  html += `</div></details>`;
+
+  // BUY
+  html += `<details class="proj-section" open><summary>To-buy (${buys.filter(x=>!x.completed).length})</summary><div class="body">`;
+  html += buys.length ? renderBuyList(p, buys) : `<div class="empty">Nothing on the buy list.</div>`;
+  html += addBuyForm(p);
+  html += `</div></details>`;
+
+  // NOTES
+  html += `<details class="proj-section"><summary>Notes</summary><div class="body">
+    <textarea class="notes" id="projNotes" placeholder="Notes...">${escapeHtml(p.notes||"")}</textarea>
+    <div class="hint" style="font-size:12px;color:var(--muted);margin-top:6px">Saves automatically.</div>
+  </div></details>`;
+
+  // SETTINGS
+  html += `<details class="proj-section"><summary>Project settings</summary><div class="body">
+    <div class="add-section">
+      <label class="inline">Name <input type="text" id="renameProj" value="${escapeHtml(p.name)}" /></label>
+      <label class="inline">Deadline <input type="date" id="changeDeadline" value="${p.deadline||""}" /></label>
+      <div class="row"><button id="saveProjMeta">Save</button></div>
+    </div>
+    <button class="delete-proj" id="deleteProjBtn">Delete project</button>
+  </div></details>`;
+
+  app.innerHTML = html;
+
+  document.getElementById("backBtn").addEventListener("click",()=>{ openProjectId=null; view="projects"; render(); window.scrollTo(0,0); });
+  document.getElementById("projNotes").addEventListener("input", e=>{ p.notes=e.target.value; save(); });
+
+  document.getElementById("saveProjMeta").addEventListener("click",()=>{
+    const newName = document.getElementById("renameProj").value.trim();
+    const newDl = document.getElementById("changeDeadline").value || null;
+    if(newName) p.name = newName;
+    p.deadline = newDl;
+    save(); render();
+  });
+  document.getElementById("deleteProjBtn").addEventListener("click",()=>{
+    if(!confirm(`Delete project "${p.name}"? This cannot be undone.`)) return;
+    state.projects = state.projects.filter(x=>x.id!==p.id);
+    openProjectId=null; view="projects"; save(); render();
+  });
+
+  bindAddForms(p);
+  bindItemEvents(p);
+}
+
+/* ---------- Sub-render helpers ---------- */
+function renderProjectSchedule(p, sched){
+  if(!sched.length) return `<div class="empty">No scheduled items.</div>`;
+  // Group by date
+  const groups = {};
+  for(const it of sched){ (groups[it.date] = groups[it.date]||[]).push(it); }
+  const dates = Object.keys(groups).sort();
+  let out = "";
+  for(const d of dates){
+    out += `<div class="datehead">${fmtLong(d)} <span class="rel">${relLabel(d)||""}</span></div>`;
+    out += renderItems(groups[d].map(i=>({...i, _kind:"schedule", _projId:p.id})), {});
+  }
+  return out;
+}
+function renderBuyList(p, buys){
+  return renderItems(buys.map(b=>({...b, _kind:"buy", _projId:p.id, title: (b.qty?`${b.qty}× `:"")+b.title})), {flat:true});
+}
+
+function renderItems(items, opts={}){
+  if(!items.length) return `<div class="empty">Nothing here.</div>`;
+  // Sort: incomplete first, then by time, then by completion time
+  const sorted = [...items].sort((a,b)=>{
+    if(!!a.completed!==!!b.completed) return a.completed?1:-1;
+    if(a.time && b.time) return a.time.localeCompare(b.time);
+    if(a.time) return -1; if(b.time) return 1;
+    return 0;
+  });
+  return sorted.map(it=>{
+    const projObj = it._projId ? state.projects.find(p=>p.id===it._projId) : findProjectOf(it);
+    const projName = projObj?projObj.name:"";
+    const kind = it._kind || guessKind(it);
+    const projId = it._projId || (projObj?projObj.id:"");
+    const tags = [];
+    if(opts.showProject && projName) tags.push(`<span class="tag proj">${escapeHtml(projName)}</span>`);
+    if(it.time) tags.push(`<span class="tag time">${fmtTime12(it.time)}</span>`);
+    if(opts.showDate && it.date) tags.push(`<span class="tag">${fmtShort(it.date)}</span>`);
+    if(it.needsConfirmation) tags.push(`<span class="tag warn">Needs confirmation</span>`);
+    if(kind==="todo" && !opts.showProject) tags.push(`<span class="tag kind">To-do</span>`);
+    if(kind==="buy"  && !opts.showProject) tags.push(`<span class="tag kind">To-buy</span>`);
+    return `<div class="item ${it.completed?"done":""}" data-id="${it.id}" data-kind="${kind}" data-proj="${projId}">
+      <div class="check" role="checkbox" aria-checked="${it.completed?"true":"false"}" tabindex="0" data-act="toggle"></div>
+      <div class="body">
+        <div class="title">${escapeHtml(it.title)}</div>
+        <div class="meta">
+          ${tags.join(" ")}
+          <span class="row-actions" style="margin-left:auto">
+            ${it.needsConfirmation
+              ? `<button class="ghost" data-act="confirm">Mark confirmed</button>`
+              : `<button class="ghost" data-act="needs">Needs confirm</button>`}
+            <button class="ghost danger" data-act="delete">Delete</button>
+          </span>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- Add forms (per-project) ---------- */
+function addScheduleForm(p){
+  return `<div class="add-section">
+    <div class="row">
+      <input type="text" id="addSchedTitle" placeholder="Schedule item title" />
+    </div>
+    <div class="row">
+      <input type="date" id="addSchedDate" value="${todayISO()}" />
+      <input type="time" id="addSchedTime" />
+      <label class="inline"><input type="checkbox" id="addSchedNeeds" /> Needs confirm</label>
+    </div>
+    <div class="row"><button data-add="schedule">Add to schedule</button></div>
+  </div>`;
+}
+function addTodoForm(p){
+  return `<div class="add-section">
+    <div class="row">
+      <input type="text" id="addTodoTitle" placeholder="To-do" />
+      <label class="inline"><input type="checkbox" id="addTodoNeeds" /> Needs confirm</label>
+      <button data-add="todo">Add</button>
+    </div>
+  </div>`;
+}
+function addBuyForm(p){
+  return `<div class="add-section">
+    <div class="row">
+      <input type="number" id="addBuyQty" placeholder="Qty" min="1" style="max-width:90px" />
+      <input type="text" id="addBuyTitle" placeholder="Item to buy" />
+      <button data-add="buy">Add</button>
+    </div>
+  </div>`;
+}
+function bindAddForms(p){
+  app.querySelectorAll("[data-add]").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      const k = btn.dataset.add;
+      if(k==="schedule"){
+        const title = document.getElementById("addSchedTitle").value.trim();
+        const date = document.getElementById("addSchedDate").value;
+        const time = document.getElementById("addSchedTime").value || null;
+        const needs = document.getElementById("addSchedNeeds").checked;
+        if(!title || !date){ toast("Title and date required."); return; }
+        p.schedule.push(sItem(title, date, time, needs));
+      } else if(k==="todo"){
+        const title = document.getElementById("addTodoTitle").value.trim();
+        const needs = document.getElementById("addTodoNeeds").checked;
+        if(!title){ toast("Title required."); return; }
+        p.todos.push(tItem(title, needs));
+      } else if(k==="buy"){
+        const title = document.getElementById("addBuyTitle").value.trim();
+        const qty = +document.getElementById("addBuyQty").value || null;
+        if(!title){ toast("Title required."); return; }
+        p.toBuy.push({ id:uid(), title, qty, completed:false, needsConfirmation:false });
+      }
+      save(); render();
+    });
+  });
+}
+
+/* ---------- Item events ---------- */
+function bindItemEvents(){
+  app.querySelectorAll(".item").forEach(node=>{
+    const id = node.dataset.id;
+    const projId = node.dataset.proj;
+    const kind = node.dataset.kind;
+    const proj = state.projects.find(p=>p.id===projId);
+    if(!proj) return;
+    const arr = kind==="schedule"?proj.schedule : kind==="buy"?proj.toBuy : proj.todos;
+    const it = arr.find(x=>x.id===id);
+    if(!it) return;
+
+    node.querySelectorAll("[data-act]").forEach(btn=>{
+      btn.addEventListener("click", e=>{
+        e.stopPropagation();
+        const act = btn.dataset.act;
+        if(act==="toggle"){
+          it.completed = !it.completed;
+          it.completedAt = it.completed ? Date.now() : null;
+        } else if(act==="needs"){
+          it.needsConfirmation = true;
+        } else if(act==="confirm"){
+          it.needsConfirmation = false;
+        } else if(act==="delete"){
+          const idx = arr.findIndex(x=>x.id===id);
+          if(idx>=0) arr.splice(idx,1);
+        }
+        save(); render();
+      });
+      // Keyboard support for the checkbox
+      btn.addEventListener("keydown", e=>{
+        if((e.key===" "||e.key==="Enter") && btn.dataset.act==="toggle"){
+          e.preventDefault(); btn.click();
+        }
+      });
+    });
+  });
+}
+
+/* ---------- Collectors ---------- */
+function collectScheduleByDate(dateList){
+  const set = new Set(dateList);
+  const out=[];
+  for(const p of state.projects){
+    for(const it of p.schedule){
+      if(set.has(it.date)) out.push({...it, _projId:p.id, _kind:"schedule"});
+    }
+  }
+  return out;
+}
+function collectOverdue(){
+  const t = todayISO();
+  const out=[];
+  for(const p of state.projects){
+    for(const it of p.schedule){
+      if(!it.completed && it.date < t) out.push({...it, _projId:p.id, _kind:"schedule"});
+    }
+  }
+  return out;
+}
+function collectNeedsConfirmActive(){
+  const out=[];
+  for(const p of state.projects){
+    for(const it of p.schedule){
+      if(it.needsConfirmation && !it.completed && it.date >= todayISO()){
+        out.push({...it, _projId:p.id, _kind:"schedule"});
+      }
+    }
+    for(const it of p.todos){
+      if(it.needsConfirmation && !it.completed){
+        out.push({...it, _projId:p.id, _kind:"todo"});
+      }
+    }
+  }
+  return out;
+}
+function projectCounts(p){
+  const t = todayISO();
+  let today=0, upcoming=0, needs=0;
+  for(const it of p.schedule){
+    if(it.completed) continue;
+    if(it.date===t) today++;
+    else if(it.date>t) upcoming++;
+    if(it.needsConfirmation) needs++;
+  }
+  for(const it of p.todos){ if(it.needsConfirmation && !it.completed) needs++; }
+  return {
+    today, upcoming,
+    todos: p.todos.filter(x=>!x.completed).length,
+    toBuy: p.toBuy.filter(x=>!x.completed).length,
+    needs,
+  };
+}
+function findProjectOf(item){
+  for(const p of state.projects){
+    if(p.schedule.includes(item) || p.todos.includes(item) || p.toBuy.includes(item)) return p;
+  }
+  return null;
+}
+function guessKind(it){
+  if(it.date) return "schedule";
+  if(it.qty!==undefined) return "buy";
+  return "todo";
+}
+function scheduleSort(a,b){
+  if(a.date!==b.date) return a.date.localeCompare(b.date);
+  if(a.time && b.time) return a.time.localeCompare(b.time);
+  if(a.time) return -1; if(b.time) return 1;
+  return 0;
+}
+function isDeadlineSoon(d){
+  if(!d) return false;
+  const days = (parseISO(d) - parseISO(todayISO()))/DAY_MS;
+  return days <= 14;
+}
+function daysUntil(d){
+  const days = Math.round((parseISO(d) - parseISO(todayISO()))/DAY_MS);
+  if(days===0) return "today";
+  if(days===1) return "tomorrow";
+  if(days<0) return `${-days} day${days===-1?"":"s"} overdue`;
+  return `in ${days} days`;
+}
+function escapeHtml(s){
+  return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+/* ---------- Punchlist ---------- */
+function showPunchlist(){
+  const t = todayISO();
+  const horizon=[];
+  for(let i=0;i<3;i++){
+    horizon.push(todayISO(new Date(Date.now()+i*DAY_MS)));
+  }
+  const overdue = collectOverdue();
+  const groups = {};
+  for(const iso of horizon){
+    const items = collectScheduleByDate([iso]).filter(x=>!x.completed);
+    if(items.length) groups[iso]=items;
+  }
+  const needs = collectNeedsConfirmActive();
+
+  // Build screen
+  const wrap = document.createElement("div");
+  wrap.className="punchlist";
+  wrap.innerHTML = `
+    <header>
+      <div class="title">Punchlist · ${fmtLong(t)}</div>
+      <div class="spacer" style="flex:1"></div>
+      <button class="iconbtn" id="closePunch">Close</button>
+    </header>
+    <div class="scroll" id="punchBody"></div>
+  `;
+  document.body.appendChild(wrap);
+  const body = wrap.querySelector("#punchBody");
+  let html = "";
+
+  if(overdue.length){
+    html += `<h4 style="color:var(--danger)">Overdue</h4><ul>`;
+    for(const it of overdue){
+      const proj = state.projects.find(p=>p.id===it._projId);
+      html += `<li><span class="pill">${escapeHtml(proj?.name||"")}</span>${escapeHtml(it.title)} — <em>${fmtShort(it.date)}</em>${it.needsConfirmation?` <span class="pill needs">needs confirm</span>`:""}</li>`;
+    }
+    html += `</ul>`;
+  }
+
+  for(const iso of horizon){
+    const items = groups[iso];
+    if(!items) continue;
+    html += `<h4>${fmtLong(iso)} ${relLabel(iso)?`· ${relLabel(iso)}`:""}</h4><ul>`;
+    // Sort by time then project
+    items.sort((a,b)=>{
+      if(a.time && b.time) return a.time.localeCompare(b.time);
+      if(a.time) return -1; if(b.time) return 1;
+      return 0;
+    });
+    for(const it of items){
+      const proj = state.projects.find(p=>p.id===it._projId);
+      html += `<li><span class="pill">${escapeHtml(proj?.name||"")}</span>${it.time?`<strong>${fmtTime12(it.time)}</strong> — `:""}${escapeHtml(it.title)}${it.needsConfirmation?` <span class="pill needs">needs confirm</span>`:""}</li>`;
+    }
+    html += `</ul>`;
+  }
+
+  if(needs.length){
+    html += `<h4>Awaiting confirmation</h4><ul>`;
+    for(const it of needs){
+      const proj = state.projects.find(p=>p.id===it._projId);
+      const when = it.date ? ` — ${fmtShort(it.date)}` : ` — to-do`;
+      html += `<li><span class="pill">${escapeHtml(proj?.name||"")}</span>${escapeHtml(it.title)}${when}</li>`;
+    }
+    html += `</ul>`;
+  }
+
+  if(!html) html = `<p class="empty">Nothing on the punchlist for the next few days.</p>`;
+  body.innerHTML = html;
+  wrap.querySelector("#closePunch").addEventListener("click",()=>wrap.remove());
+}
+
+/* ---------- Wire up ---------- */
+document.querySelectorAll("nav.tabs button").forEach(b=>{
+  b.addEventListener("click",()=>{ openProjectId=null; view=b.dataset.view; render(); window.scrollTo(0,0); });
+});
+document.getElementById("punchBtn").addEventListener("click", showPunchlist);
+const qa = document.getElementById("quickAdd");
+document.getElementById("quickGo").addEventListener("click",()=>{
+  if(quickAdd(qa.value)) qa.value="";
+});
+qa.addEventListener("keydown", e=>{
+  if(e.key==="Enter"){ e.preventDefault(); if(quickAdd(qa.value)) qa.value=""; }
+});
+
+/* Keep view in sync with localStorage between tabs */
+window.addEventListener("storage", e=>{
+  if(e.key===STORE_KEY){ state = load(); render(); }
+});
+
+/* Run-time tick to refresh "Today" near midnight */
+let lastDay = todayISO();
+setInterval(()=>{
+  const now = todayISO();
+  if(now!==lastDay){ lastDay=now; render(); }
+  else archiveSweep();
+}, 60000);
+
+render();
+</script>
+</body>
+</html>
