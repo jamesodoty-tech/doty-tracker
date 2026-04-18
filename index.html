@@ -1406,6 +1406,8 @@ function showPunchlist(){
     if(items.length) groups[iso]=items;
   }
   const needs = collectNeedsConfirmActive();
+  const todos = collectOpenTodos();
+  const toBuy = collectOpenToBuy();
 
   const wrap = document.createElement("div");
   wrap.className="punchlist";
@@ -1452,6 +1454,25 @@ function showPunchlist(){
       const proj = state.projects.find(p=>p.id===it._projId);
       const when = it.date ? ` — ${fmtShort(it.date)}` : ` — to-do`;
       html += `<li><span class="pill">${escapeHtml(proj?.name||"")}</span>${escapeHtml(it.title)}${when}</li>`;
+    }
+    html += `</ul>`;
+  }
+
+  if(todos.length){
+    html += `<h4>To-do</h4><ul>`;
+    for(const it of todos){
+      const proj = state.projects.find(p=>p.id===it._projId);
+      html += `<li><span class="pill">${escapeHtml(proj?.name||"")}</span>${escapeHtml(it.title)}${it.needsConfirmation?` <span class="pill needs">needs confirm</span>`:""}</li>`;
+    }
+    html += `</ul>`;
+  }
+
+  if(toBuy.length){
+    html += `<h4>To-buy</h4><ul>`;
+    for(const it of toBuy){
+      const proj = state.projects.find(p=>p.id===it._projId);
+      const label = (it.qty?`${it.qty}× `:"") + it.title;
+      html += `<li><span class="pill">${escapeHtml(proj?.name||"")}</span>${escapeHtml(label)}</li>`;
     }
     html += `</ul>`;
   }
