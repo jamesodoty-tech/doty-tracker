@@ -64,6 +64,73 @@
   .iconbtn.primary:hover{background:#e55f00}
   .iconbtn svg{width:18px;height:18px}
 
+  .syncbadge{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;
+    letter-spacing:.04em;text-transform:uppercase;
+    background:#222;color:#fff;border:1px solid #444;
+    cursor:pointer;min-height:28px;
+  }
+  .syncbadge .dot{
+    width:8px;height:8px;border-radius:50%;background:#888;
+    box-shadow:0 0 0 1px rgba(255,255,255,.15);
+  }
+  .syncbadge.ok .dot{background:#3ad28a}
+  .syncbadge.syncing .dot{background:#ffb020;animation:pulse 1s infinite}
+  .syncbadge.err .dot{background:#ff5a60}
+  .syncbadge.off .dot{background:#888}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  .auth-back{
+    position:fixed;inset:0;background:rgba(0,0,0,.78);
+    z-index:100;display:grid;place-items:center;
+    padding:20px;
+  }
+  .auth-card{
+    background:#fff;border-radius:16px;padding:22px;
+    width:min(420px,100%);box-shadow:0 12px 40px rgba(0,0,0,.45);
+  }
+  .auth-card h2{margin:0 0 6px;font-size:20px}
+  .auth-card .sub{margin-bottom:14px}
+  .auth-card input[type=password]{
+    width:100%;padding:12px 14px;font-size:16px;
+    border:1px solid var(--line);border-radius:10px;background:#fafafa;
+    margin-bottom:10px;box-sizing:border-box;
+  }
+  .auth-card .err{color:var(--danger);font-size:13px;min-height:18px;margin-bottom:8px}
+  .auth-card .row{display:flex;gap:8px;justify-content:flex-end}
+
+  /* View-as (admin) read-only mode */
+  .viewas-bar{
+    display:none;
+    position:sticky;top:0;z-index:60;
+    background:#5a3500;color:#fff;
+    padding:10px 14px;font-size:14px;font-weight:700;
+    align-items:center;justify-content:space-between;gap:10px;
+    border-bottom:2px solid var(--accent);
+  }
+  .viewas-bar .iconbtn{
+    background:#fff;color:#111;border-color:#fff;min-height:34px;padding:0 12px;
+  }
+  body.viewas .quickbar{display:none}
+  body.viewas .row-actions{display:none !important}
+  body.viewas .check{pointer-events:none;opacity:.85}
+  body.viewas .ghost,
+  body.viewas button{pointer-events:none;opacity:.7}
+  body.viewas .viewas-bar .iconbtn,
+  body.viewas nav.tabs button,
+  body.viewas .iconbtn#timeBtn,
+  body.viewas .iconbtn#punchBtn,
+  body.viewas #syncBadge{pointer-events:auto;opacity:1}
+
+  /* Users panel (admin) */
+  .users-table{width:100%;border-collapse:collapse;font-size:13px}
+  .users-table th, .users-table td{
+    padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;
+  }
+  .users-table th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .users-table button{margin-left:4px}
+
   nav.tabs{
     position:sticky;top:0;z-index:40;
     display:grid;grid-template-columns:repeat(4,1fr);
@@ -295,12 +362,17 @@
     <img src="doty-logo-black-bg.png" alt="DOTY" />
   </div>
   <div class="spacer"></div>
+  <button class="syncbadge off" id="syncBadge" title="Cloud sync status">
+    <span class="dot"></span><span id="syncLabel">Offline</span>
+  </button>
   <button class="iconbtn" id="timeBtn" title="Time tracker">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12,7 12,12 15,14"/></svg>
     Time
   </button>
   <button class="iconbtn primary" id="punchBtn" title="Run punchlist">Punch</button>
 </header>
+
+<div class="viewas-bar" id="viewAsBanner"></div>
 
 <nav class="tabs" id="tabs">
   <button data-view="today" class="active">Today</button>
@@ -344,7 +416,260 @@
    Storage: localStorage key STORE_KEY
    ============================================================ */
 const STORE_KEY = "doty.tracker.v1";
+const AUTH_KEY  = "doty.tracker.auth";
+const WORKER_URL = "https://doty-tracker-api.james-5aa.workers.dev";
 const ARCHIVE_AFTER_HOURS = 24;
+
+/* ---------- Cloud sync (multi-user) ---------- */
+const sync = {
+  user: loadAuth(),            // { username, password, role } or null
+  viewAs: null,                // username being viewed (admin only), or null
+  stashedState: null,
+  pushTimer: null,
+  inflight: false,
+  suspended: true,             // true until initial fetch completes
+  lastRemoteAt: null,
+};
+function loadAuth(){
+  try{ const r = localStorage.getItem(AUTH_KEY); return r ? JSON.parse(r) : null; }
+  catch{ return null; }
+}
+function saveAuth(u){
+  localStorage.setItem(AUTH_KEY, JSON.stringify(u));
+  sync.user = u;
+}
+function clearAuth(){
+  localStorage.removeItem(AUTH_KEY);
+  sync.user = null;
+}
+function authHeader(){
+  if(!sync.user) return "";
+  return "Basic " + btoa(sync.user.username + ":" + sync.user.password);
+}
+function setSyncStatus(cls, label){
+  const b = document.getElementById("syncBadge");
+  const l = document.getElementById("syncLabel");
+  if(!b || !l) return;
+  b.classList.remove("ok","syncing","err","off");
+  b.classList.add(cls);
+  l.textContent = label;
+  b.title = sync.user
+    ? `Signed in as ${sync.user.username} (${sync.user.role})`
+    : "Not signed in";
+}
+async function loginApi(username, password){
+  const res = await fetch(WORKER_URL + "/auth", {
+    method: "POST",
+    headers: {
+      "content-type":"application/json",
+      "authorization":"Basic " + btoa(username + ":" + password),
+    },
+    body: "{}",
+  });
+  if(!res.ok) throw new Error("unauthorized");
+  return await res.json(); // { ok, role, username, bootstrapped? }
+}
+function promptLogin({errorText=""}={}){
+  return new Promise(resolve=>{
+    const host = document.getElementById("modalHost");
+    host.innerHTML = `
+      <div class="auth-back" id="authBack">
+        <form class="auth-card" id="authCard" autocomplete="off">
+          <h2>Sign in to sync</h2>
+          <div class="sub">Username (lowercase, 3-20 chars, a-z 0-9 -) + password. First-time admin setup: use your bootstrap password.</div>
+          <input type="text" id="authUser" autofocus autocomplete="username" placeholder="Username" autocapitalize="none" />
+          <input type="password" id="authPw" autocomplete="current-password" placeholder="Password" />
+          <div class="err" id="authErr">${escapeHtml(errorText)}</div>
+          <div class="row">
+            <button type="button" class="ghost" id="authOffline">Work offline</button>
+            <button type="submit" class="ghost primary" id="authOk">Unlock</button>
+          </div>
+        </form>
+      </div>`;
+    const u = document.getElementById("authUser");
+    const p = document.getElementById("authPw");
+    const err = document.getElementById("authErr");
+    u.focus();
+    document.getElementById("authOffline").addEventListener("click", ()=>{
+      host.innerHTML = ""; resolve(null);
+    });
+    document.getElementById("authCard").addEventListener("submit", async e=>{
+      e.preventDefault();
+      const un = u.value.trim().toLowerCase();
+      const pw = p.value;
+      if(!un || !pw){ err.textContent = "Enter a username and password."; return; }
+      err.textContent = "Checking...";
+      try{
+        const r = await loginApi(un, pw);
+        host.innerHTML = "";
+        resolve({ username: un, password: pw, role: r.role });
+      }catch{
+        err.textContent = "Wrong credentials or network error.";
+        p.select();
+      }
+    });
+  });
+}
+async function fetchRemote(asUsername){
+  if(!sync.user) return null;
+  const url = WORKER_URL + "/data" + (asUsername ? `?as=${encodeURIComponent(asUsername)}` : "");
+  const res = await fetch(url, { headers: { "authorization": authHeader() }});
+  if(res.status === 401) throw new Error("unauthorized");
+  if(!res.ok) throw new Error("fetch failed: "+res.status);
+  return await res.json();
+}
+async function pushRemoteNow(){
+  if(!sync.user || sync.suspended || sync.viewAs) return;
+  if(sync.inflight){ schedulePush(400); return; }
+  sync.inflight = true;
+  setSyncStatus("syncing","Syncing");
+  try{
+    const res = await fetch(WORKER_URL + "/data", {
+      method: "PUT",
+      headers: { "content-type":"application/json", "authorization": authHeader() },
+      body: JSON.stringify({ data: state }),
+    });
+    if(res.status === 401){
+      setSyncStatus("err","Signed out");
+      clearAuth();
+      return;
+    }
+    if(!res.ok) throw new Error("push failed: "+res.status);
+    const j = await res.json();
+    sync.lastRemoteAt = j.updatedAt;
+    setSyncStatus("ok","Synced");
+  }catch(e){
+    console.warn("push error",e);
+    setSyncStatus("err","Offline");
+  }finally{
+    sync.inflight = false;
+  }
+}
+function schedulePush(ms=800){
+  clearTimeout(sync.pushTimer);
+  sync.pushTimer = setTimeout(pushRemoteNow, ms);
+}
+async function initSync(){
+  if(!sync.user){
+    setSyncStatus("off","Locked");
+    const creds = await promptLogin({});
+    if(!creds){ setSyncStatus("off","Offline"); sync.suspended = true; return; }
+    saveAuth(creds);
+  }
+  setSyncStatus("syncing","Syncing");
+  try{
+    const remote = await fetchRemote();
+    if(remote && remote.data && typeof remote.data === "object" && Array.isArray(remote.data.projects)){
+      state = migrate(remote.data);
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      sync.lastRemoteAt = remote.updatedAt;
+      sync.suspended = false;
+      setSyncStatus("ok","Synced");
+      render();
+    } else {
+      sync.suspended = false;
+      await pushRemoteNow();
+    }
+  }catch(e){
+    if(String(e.message).includes("unauthorized")){
+      clearAuth();
+      setSyncStatus("err","Signed out");
+      const creds = await promptLogin({errorText:"Session expired. Sign in again."});
+      if(creds){ saveAuth(creds); return initSync(); }
+      sync.suspended = true; setSyncStatus("off","Offline"); return;
+    }
+    console.warn("fetchRemote failed",e);
+    setSyncStatus("err","Offline");
+    sync.suspended = false;
+  }
+}
+function signOutSync(){
+  if(sync.viewAs) exitViewAs();
+  clearAuth();
+  sync.suspended = true;
+  setSyncStatus("off","Locked");
+}
+
+/* ---------- Admin API ---------- */
+async function adminListUsers(){
+  const res = await fetch(WORKER_URL + "/admin/users", { headers: { "authorization": authHeader() }});
+  if(!res.ok) throw new Error("list failed: "+res.status);
+  return (await res.json()).users || [];
+}
+async function adminCreateUser(username, password){
+  const res = await fetch(WORKER_URL + "/admin/users", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ username, password }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "create failed");
+  return j;
+}
+async function adminResetPassword(username, password){
+  const res = await fetch(WORKER_URL + "/admin/users/reset-password", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ username, password }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "reset failed");
+  return j;
+}
+async function adminDeleteUser(username){
+  const res = await fetch(WORKER_URL + "/admin/users/" + encodeURIComponent(username), {
+    method: "DELETE",
+    headers: { "authorization": authHeader() },
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "delete failed");
+  return j;
+}
+
+/* ---------- View-as (admin feature, read-only) ---------- */
+async function enterViewAs(username){
+  if(!sync.user || sync.user.role !== "admin") return;
+  if(sync.viewAs === username) return;
+  setSyncStatus("syncing","Loading "+username);
+  try{
+    const remote = await fetchRemote(username);
+    if(!remote || !remote.data){ toast("No data for "+username); setSyncStatus("ok","Synced"); return; }
+    sync.viewAs = username;
+    sync.stashedState = state;
+    state = migrate(remote.data);
+    document.body.classList.add("viewas");
+    renderViewAsBanner();
+    view = "today"; openProjectId = null;
+    render();
+    setSyncStatus("ok","Viewing "+username);
+    window.scrollTo(0,0);
+  }catch(e){
+    toast("Failed to load "+username);
+    setSyncStatus("err","Offline");
+  }
+}
+function exitViewAs(){
+  if(!sync.viewAs) return;
+  sync.viewAs = null;
+  sync.stashedState = null;
+  state = load();
+  document.body.classList.remove("viewas");
+  renderViewAsBanner();
+  view = "today"; openProjectId = null;
+  render();
+  setSyncStatus("ok","Synced");
+  window.scrollTo(0,0);
+}
+function renderViewAsBanner(){
+  const host = document.getElementById("viewAsBanner");
+  if(!host) return;
+  if(!sync.viewAs){ host.innerHTML = ""; host.style.display = "none"; return; }
+  host.style.display = "flex";
+  host.innerHTML = `
+    <span>Viewing as <b>${escapeHtml(sync.viewAs)}</b> — read only</span>
+    <button id="vaExit" class="iconbtn">Switch back</button>`;
+  document.getElementById("vaExit").addEventListener("click", exitViewAs);
+}
 
 /* ---------- Date helpers ---------- */
 const DAY_MS = 86400000;
@@ -412,7 +737,11 @@ function migrate(s){
   if(typeof s.settings !== "object" || !s.settings) s.settings = {};
   return s;
 }
-function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function save(){
+  if(sync.viewAs) return; // read-only while viewing another user
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  if(sync.user && !sync.suspended) schedulePush();
+}
 
 function seed(){
   const p1 = {
@@ -1252,8 +1581,56 @@ function openEditTimeModal(entry){
 
 /* ---------- Settings / Backup ---------- */
 function renderSettings(){
+  const me = sync.user;
+  const signedIn = !!me;
+  const isAdmin = signedIn && me.role === "admin";
+  const lastAt = sync.lastRemoteAt ? new Date(sync.lastRemoteAt).toLocaleString() : "never";
   app.innerHTML = `
     <div class="h1">Settings</div>
+
+    <div class="h2">Cloud sync</div>
+    <div class="add-section">
+      <div class="hint">
+        ${signedIn
+          ? `Signed in as <b>${escapeHtml(me.username)}</b> <span class="tag">${escapeHtml(me.role)}</span>. Last synced: <b>${escapeHtml(lastAt)}</b>. Sign in on any browser with the same credentials to see the same data.`
+          : `Not signed in. Your data is only stored in this browser. Sign in to sync across devices.`}
+      </div>
+      <div class="row" style="gap:8px">
+        ${signedIn
+          ? `<button id="btnSyncNow">Sync now</button>
+             <button id="btnSignOut" style="background:#fff;color:var(--danger);border-color:#f1c1c8">Sign out on this device</button>`
+          : `<button id="btnSignIn">Sign in to sync</button>`}
+      </div>
+    </div>
+
+    ${isAdmin ? `
+    <div class="h2">Users <span class="tag">admin</span></div>
+    <div class="add-section">
+      <div class="hint">Create users so they can sign in on their own devices. New users start with your project names + deadlines but a blank slate for tasks, schedule, buys, and notes.</div>
+      <div id="usersPanel" class="users-panel">Loading users...</div>
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <div style="font-weight:700;margin-bottom:6px">Add a new user</div>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <input type="text" id="newUserName" placeholder="username (a-z 0-9 -)" autocapitalize="none" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+          <input type="text" id="newUserPw" placeholder="initial password" autocapitalize="none" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+          <button id="btnCreateUser" class="ghost primary">Create user</button>
+        </div>
+        <div class="hint" style="margin-top:6px">Share the username + password with them. They can change their password later (feature coming; for now ask admin to reset).</div>
+      </div>
+    </div>
+
+    <div class="h2">View other users</div>
+    <div class="add-section">
+      <div class="hint">Open any user's tracker read-only. Use this to see what your team is working on.</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <select id="viewAsSelect" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--line);border-radius:8px">
+          <option value="">— pick a user —</option>
+        </select>
+        <button id="btnViewAs" class="ghost">View their tracker</button>
+      </div>
+    </div>
+    ` : ``}
+
     <div class="h2">Backup & restore</div>
     <div class="add-section">
       <div class="hint">Export a full JSON backup of your projects, schedule, to-dos, to-buys, notes, and time entries. Import one later to restore.</div>
@@ -1275,9 +1652,48 @@ function renderSettings(){
 
     <div class="h2">About</div>
     <div class="sub" style="margin:6px 0 20px">
-      DOTY — mobile-first project tracker. Data lives in this browser's localStorage on this device. Add to Home Screen for a full-screen app.
+      DOTY — mobile-first project tracker. With cloud sync on, your data lives in a password-protected Cloudflare KV store and mirrors to every browser you sign in on. Add to Home Screen for a full-screen app.
     </div>
   `;
+  const signIn = document.getElementById("btnSignIn");
+  if(signIn) signIn.addEventListener("click", async ()=>{
+    const creds = await promptLogin({});
+    if(!creds) return;
+    saveAuth(creds);
+    await initSync(); render();
+  });
+  const signOut = document.getElementById("btnSignOut");
+  if(signOut) signOut.addEventListener("click", ()=>{
+    if(!confirm("Sign out of cloud sync on this device? Your local data stays but won't sync until you sign in again.")) return;
+    signOutSync(); render();
+  });
+  const syncNow = document.getElementById("btnSyncNow");
+  if(syncNow) syncNow.addEventListener("click", async ()=>{
+    await pushRemoteNow(); toast("Pushed to cloud.");
+  });
+
+  if(isAdmin){
+    refreshUsersPanel();
+    document.getElementById("btnCreateUser").addEventListener("click", async ()=>{
+      const u = document.getElementById("newUserName").value.trim().toLowerCase();
+      const p = document.getElementById("newUserPw").value;
+      if(!/^[a-z0-9-]{3,20}$/.test(u)){ alert("Username must be 3-20 chars: a-z, 0-9, dash."); return; }
+      if(p.length < 4){ alert("Password must be at least 4 characters."); return; }
+      try{
+        await adminCreateUser(u, p);
+        toast(`Created ${u}`);
+        document.getElementById("newUserName").value = "";
+        document.getElementById("newUserPw").value = "";
+        refreshUsersPanel();
+      }catch(e){ alert("Couldn't create user: " + e.message); }
+    });
+    document.getElementById("btnViewAs").addEventListener("click", async ()=>{
+      const u = document.getElementById("viewAsSelect").value;
+      if(!u){ alert("Pick a user first."); return; }
+      await enterViewAs(u);
+    });
+  }
+
   document.getElementById("btnExport").addEventListener("click", exportData);
   document.getElementById("btnImport").addEventListener("click", ()=>document.getElementById("fileImport").click());
   document.getElementById("fileImport").addEventListener("change", importData);
@@ -1296,6 +1712,65 @@ function renderSettings(){
     save();
     view = "projects"; openProjectId = null;
     render(); toast("All data cleared.");
+  });
+}
+async function refreshUsersPanel(){
+  const panel = document.getElementById("usersPanel");
+  const select = document.getElementById("viewAsSelect");
+  if(!panel) return;
+  panel.textContent = "Loading users...";
+  let users = [];
+  try{ users = await adminListUsers(); }
+  catch(e){ panel.textContent = "Couldn't load users: " + e.message; return; }
+  if(!users.length){ panel.textContent = "No users yet."; return; }
+  panel.innerHTML = `
+    <table class="users-table">
+      <thead><tr>
+        <th>Username</th><th>Role</th><th>Last sync</th><th style="text-align:right">Actions</th>
+      </tr></thead>
+      <tbody>
+      ${users.map(u=>{
+        const last = u.lastUpdatedAt ? new Date(u.lastUpdatedAt).toLocaleString() : "—";
+        const self = sync.user && u.username === sync.user.username;
+        return `<tr>
+          <td><b>${escapeHtml(u.username)}</b>${self?' <span class="tag">you</span>':''}</td>
+          <td><span class="tag">${escapeHtml(u.role)}</span></td>
+          <td>${escapeHtml(last)}</td>
+          <td style="text-align:right">
+            ${!self ? `<button class="ghost" data-act="view" data-user="${escapeHtml(u.username)}">View</button>` : ''}
+            <button class="ghost" data-act="reset" data-user="${escapeHtml(u.username)}">Reset pw</button>
+            ${!self ? `<button class="ghost danger" data-act="delete" data-user="${escapeHtml(u.username)}">Delete</button>` : ''}
+          </td>
+        </tr>`;
+      }).join("")}
+      </tbody>
+    </table>`;
+  if(select){
+    select.innerHTML = `<option value="">— pick a user —</option>` +
+      users
+        .filter(u => !sync.user || u.username !== sync.user.username)
+        .map(u => `<option value="${escapeHtml(u.username)}">${escapeHtml(u.username)}</option>`)
+        .join("");
+  }
+  panel.querySelectorAll("button[data-act]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const act = btn.dataset.act;
+      const un  = btn.dataset.user;
+      if(act === "view"){
+        await enterViewAs(un);
+      } else if(act === "reset"){
+        const np = prompt(`New password for ${un}:`);
+        if(!np) return;
+        if(np.length < 4){ alert("Password must be at least 4 characters."); return; }
+        try{ await adminResetPassword(un, np); toast(`Reset password for ${un}.`); }
+        catch(e){ alert("Reset failed: " + e.message); }
+      } else if(act === "delete"){
+        if(!confirm(`Delete user "${un}" and all their data? Cannot be undone.`)) return;
+        if(!confirm(`Really delete "${un}"?`)) return;
+        try{ await adminDeleteUser(un); toast(`Deleted ${un}.`); refreshUsersPanel(); }
+        catch(e){ alert("Delete failed: " + e.message); }
+      }
+    });
   });
 }
 function exportData(){
@@ -1395,7 +1870,21 @@ setInterval(()=>{
   else archiveSweep();
 }, 60000);
 
+document.getElementById("syncBadge").addEventListener("click", async ()=>{
+  if(!sync.user){
+    const creds = await promptLogin({});
+    if(!creds) return;
+    saveAuth(creds);
+    await initSync(); render(); return;
+  }
+  if(sync.viewAs){ exitViewAs(); return; }
+  await pushRemoteNow();
+});
+
 render();
+
+// Kick off cloud sync after initial paint so the app is usable immediately.
+initSync();
 </script>
 </body>
 </html>
