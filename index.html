@@ -529,11 +529,36 @@ async function pushRemoteNow(){
     const res = await fetch(WORKER_URL + "/data", {
       method: "PUT",
       headers: { "content-type":"application/json", "authorization": authHeader() },
-      body: JSON.stringify({ data: state }),
+      // v4.4: send prevUpdatedAt so the worker can reject blind overwrites.
+      // If the stored updatedAt differs, server returns 409 and we refresh
+      // from remote instead of clobbering (e.g. MCP) writes.
+      body: JSON.stringify({ data: state, prevUpdatedAt: sync.lastRemoteAt }),
     });
     if(res.status === 401){
       setSyncStatus("err","Signed out");
       clearAuth();
+      return;
+    }
+    if(res.status === 409){
+      // Server has newer data than we expected. Refetch + replace local state
+      // so we don't clobber concurrent writes (typically from MCP).
+      console.warn("push conflict (409) — refreshing from server");
+      try{
+        const remote = await fetchRemote();
+        if(remote && remote.data && typeof remote.data === "object" && Array.isArray(remote.data.projects)){
+          state = migrate(remote.data);
+          localStorage.setItem(STORE_KEY, JSON.stringify(state));
+          sync.lastRemoteAt = remote.updatedAt;
+          render();
+          setSyncStatus("ok","Refreshed");
+          toast("Server had newer data — refreshed. Redo your last change if needed.");
+        } else {
+          setSyncStatus("err","Conflict");
+        }
+      }catch(err){
+        console.warn("conflict refresh failed", err);
+        setSyncStatus("err","Conflict");
+      }
       return;
     }
     if(!res.ok) throw new Error("push failed: "+res.status);
