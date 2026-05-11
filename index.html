@@ -550,9 +550,11 @@ async function pushRemoteNow(){
       return;
     }
     if(res.status === 409){
-      // Server has newer data than we expected. Refetch + replace local state
-      // so we don't clobber writes from another browser session.
+      // Server has newer data than we expected. Stash a deep copy of the
+      // pre-conflict local state so the user can opt to restore it, then
+      // refetch + replace local state so we don't clobber concurrent writes.
       console.warn("push conflict (409) — refreshing from server");
+      const stashed = JSON.parse(JSON.stringify(state));
       try{
         const remote = await fetchRemote();
         if(remote && remote.data && typeof remote.data === "object" && Array.isArray(remote.data.projects)){
@@ -561,7 +563,20 @@ async function pushRemoteNow(){
           sync.lastRemoteAt = remote.updatedAt;
           render();
           setSyncStatus("ok","Refreshed");
-          toast("Server had newer data — refreshed. Redo your last change if needed.");
+          toastWithAction(
+            "Server had newer data — refreshed.",
+            "Restore my version",
+            async ()=>{
+              // Replace local state with the pre-conflict snapshot, then push.
+              // sync.lastRemoteAt is now the freshly-fetched server version, so
+              // the push will pass CAS and overwrite what's there.
+              state = migrate(stashed);
+              localStorage.setItem(STORE_KEY, JSON.stringify(state));
+              render();
+              await pushRemoteNow();
+              toast("Your version restored.");
+            }
+          );
         } else {
           setSyncStatus("err","Conflict");
         }
@@ -790,6 +805,23 @@ function load(){
 function migrate(s){
   if(!Array.isArray(s.timeEntries)) s.timeEntries = [];
   if(typeof s.settings !== "object" || !s.settings) s.settings = {};
+  if(!Array.isArray(s.dismissedShared)) s.dismissedShared = [];
+  // Ensure soft-archive arrays exist on every project, and filter out any
+  // shadow items the user has dismissed.
+  if(Array.isArray(s.projects)){
+    const dismissed = new Set(s.dismissedShared);
+    for(const p of s.projects){
+      if(!p) continue;
+      if(!Array.isArray(p.archivedSchedule)) p.archivedSchedule = [];
+      if(!Array.isArray(p.archivedTodos))    p.archivedTodos = [];
+      if(!Array.isArray(p.archivedToBuy))    p.archivedToBuy = [];
+      for(const k of ["schedule","todos","toBuy"]){
+        if(Array.isArray(p[k])){
+          p[k] = p[k].filter(it => !(it && it.sharedFrom && dismissed.has(it.id)));
+        }
+      }
+    }
+  }
   // Normalize legacy time entries (old shape: {project:<name>, start, end, note}).
   // Modern shape: {id, projectId, date, hours, note, createdAt}.
   const projects = Array.isArray(s.projects) ? s.projects : [];
@@ -887,16 +919,36 @@ let timePeriod = "week";
 let timeAnchorISO = todayISO();
 let qaLastProjectId = state.projects[0]?.id || null;
 
-/* ---------- Auto-archive ---------- */
+/* ---------- Auto-archive (soft) ---------- */
 function archiveSweep(){
   const cutoff = Date.now() - ARCHIVE_AFTER_HOURS*3600*1000;
   let changed=false;
+  const isShadow = (x) => x && typeof x.id === "string" && x.id.startsWith("shared:") && x.sharedFrom;
+  const sweepKind = (live, arch) => {
+    const keep = []; const move = [];
+    for(const x of live){
+      const eligible = x.completed && x.completedAt && x.completedAt < cutoff;
+      // Shadow items can't be archived locally — they're regenerated from the
+      // owner's data on every sync. Just leave them visible.
+      if(eligible && !isShadow(x)){
+        x._archivedAt = Date.now();
+        move.push(x);
+      } else {
+        keep.push(x);
+      }
+    }
+    if(move.length) arch.push(...move);
+    return [keep, move.length > 0];
+  };
   for(const p of state.projects){
-    const pre = (p.schedule.length+p.todos.length+p.toBuy.length);
-    p.schedule = p.schedule.filter(x => !(x.completed && x.completedAt && x.completedAt < cutoff));
-    p.todos    = p.todos.filter(x => !(x.completed && x.completedAt && x.completedAt < cutoff));
-    p.toBuy    = p.toBuy.filter(x => !(x.completed && x.completedAt && x.completedAt < cutoff));
-    if(pre !== (p.schedule.length+p.todos.length+p.toBuy.length)) changed=true;
+    if(!Array.isArray(p.archivedSchedule)) p.archivedSchedule = [];
+    if(!Array.isArray(p.archivedTodos))    p.archivedTodos = [];
+    if(!Array.isArray(p.archivedToBuy))    p.archivedToBuy = [];
+    let any = false, r;
+    r = sweepKind(p.schedule, p.archivedSchedule); p.schedule = r[0]; if(r[1]) any = true;
+    r = sweepKind(p.todos,    p.archivedTodos);    p.todos    = r[0]; if(r[1]) any = true;
+    r = sweepKind(p.toBuy,    p.archivedToBuy);    p.toBuy    = r[0]; if(r[1]) any = true;
+    if(any) changed = true;
   }
   if(changed) save();
 }
@@ -919,7 +971,8 @@ function quickAddStructured({projectId, kind, title, date, time, needs}){
     toast(`Added to ${p.name} to-buy`);
   } else if(kind === "note"){
     p.notes = (p.notes ? p.notes + "\n" : "") + title;
-    toast(`Note appended to ${p.name}`);
+    const preview = title.length > 40 ? title.slice(0, 40) + "…" : title;
+    toast(`Note appended to ${p.name}: "${preview}"`);
   }
   qaLastProjectId = p.id;
   save(); render();
@@ -933,6 +986,20 @@ function toast(msg){
   el.textContent=msg; el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer=setTimeout(()=>el.classList.remove("show"),2400);
+}
+// Like toast() but with an action button. Stays up for `ttl` ms (default 10s).
+function toastWithAction(msg, actionLabel, onAction, ttl=10000){
+  const el = document.getElementById("toast");
+  clearTimeout(toastTimer);
+  el.innerHTML = `<span style="margin-right:12px">${escapeHtml(msg)}</span>` +
+    `<button id="__toastAction" style="background:#fff;color:#000;border:0;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer">${escapeHtml(actionLabel)}</button>`;
+  el.classList.add("show");
+  const dismiss = ()=>{ el.classList.remove("show"); el.innerHTML = ""; };
+  document.getElementById("__toastAction").addEventListener("click", ()=>{
+    dismiss();
+    try{ onAction(); }catch(e){ console.warn("toast action failed", e); }
+  });
+  toastTimer = setTimeout(dismiss, ttl);
 }
 
 /* ---------- Rendering ---------- */
@@ -1115,34 +1182,100 @@ function renderProject(p){
     <div class="hint" style="font-size:12px;color:var(--muted);margin-top:6px">Saves automatically.</div>
   </div></details>`;
 
-  html += `<details class="proj-section"><summary>Project settings</summary><div class="body">
-    <div class="add-section">
-      <label class="inline">Name <input type="text" id="renameProj" value="${escapeHtml(p.name)}" /></label>
-      <label class="inline">Deadline <input type="date" id="changeDeadline" value="${p.deadline||""}" /></label>
-      <div class="row"><button id="saveProjMeta">Save</button></div>
-    </div>
-    <button class="delete-proj" id="deleteProjBtn">Delete project</button>
-  </div></details>`;
+  html += renderArchivedSection(p);
+
+  if(p.sharedVirtual){
+    html += `<details class="proj-section"><summary>Project settings</summary><div class="body">
+      <div class="hint">This project is a shared view from another user. You can't rename or delete it from here — it'll come back on next sync. Use the "Hide" button on individual shared items to remove them from your view.</div>
+    </div></details>`;
+  } else {
+    html += `<details class="proj-section"><summary>Project settings</summary><div class="body">
+      <div class="add-section">
+        <label class="inline">Name <input type="text" id="renameProj" value="${escapeHtml(p.name)}" /></label>
+        <label class="inline">Deadline <input type="date" id="changeDeadline" value="${p.deadline||""}" /></label>
+        <div class="row"><button id="saveProjMeta">Save</button></div>
+      </div>
+      <button class="delete-proj" id="deleteProjBtn">Delete project</button>
+    </div></details>`;
+  }
 
   app.innerHTML = html;
 
   document.getElementById("backBtn").addEventListener("click",()=>{ openProjectId=null; view="projects"; render(); window.scrollTo(0,0); });
   document.getElementById("projNotes").addEventListener("input", e=>{ p.notes=e.target.value; save(); });
 
-  document.getElementById("saveProjMeta").addEventListener("click",()=>{
-    const newName = document.getElementById("renameProj").value.trim();
-    const newDl = document.getElementById("changeDeadline").value || null;
-    if(newName) p.name = newName;
-    p.deadline = newDl;
-    save(); render();
-  });
-  document.getElementById("deleteProjBtn").addEventListener("click",()=>{
-    if(!confirm(`Delete project "${p.name}"? This cannot be undone.`)) return;
-    state.projects = state.projects.filter(x=>x.id!==p.id);
-    openProjectId=null; view="projects"; save(); render();
+  if(!p.sharedVirtual){
+    document.getElementById("saveProjMeta").addEventListener("click",()=>{
+      const newName = document.getElementById("renameProj").value.trim();
+      const newDl = document.getElementById("changeDeadline").value || null;
+      if(newName) p.name = newName;
+      p.deadline = newDl;
+      save(); render();
+    });
+    document.getElementById("deleteProjBtn").addEventListener("click",()=>{
+      if(!confirm(`Delete project "${p.name}"? This cannot be undone.`)) return;
+      state.projects = state.projects.filter(x=>x.id!==p.id);
+      openProjectId=null; view="projects"; save(); render();
+    });
+  }
+
+  // Archive section actions: Restore (back to live list) + permanent Delete.
+  app.querySelectorAll('.archived-item [data-archact]').forEach(btn => {
+    btn.addEventListener("click", () => {
+      const node = btn.closest(".archived-item");
+      const kind = node.dataset.akind;
+      const id   = node.dataset.aid;
+      const archKey = kind === "schedule" ? "archivedSchedule" : kind === "todo" ? "archivedTodos" : "archivedToBuy";
+      const liveKey = kind === "schedule" ? "schedule"        : kind === "todo" ? "todos"        : "toBuy";
+      const arr = p[archKey] || [];
+      const idx = arr.findIndex(x => x.id === id);
+      if(idx < 0) return;
+      if(btn.dataset.archact === "restore"){
+        const [restored] = arr.splice(idx, 1);
+        restored.completed = false;
+        restored.completedAt = null;
+        delete restored._archivedAt;
+        p[liveKey] = p[liveKey] || [];
+        p[liveKey].push(restored);
+        save(); render();
+        toast(`Restored "${restored.title || "(item)"}".`);
+      } else if(btn.dataset.archact === "purge"){
+        const removed = arr[idx];
+        if(!confirm(`Permanently delete "${removed.title || "this item"}"? Cannot be undone.`)) return;
+        arr.splice(idx, 1);
+        save(); render();
+        toast("Deleted.");
+      }
+    });
   });
 
   bindItemEvents();
+}
+
+function renderArchivedSection(p){
+  const sections = [
+    { key: "archivedSchedule", label: "Schedule", kind: "schedule" },
+    { key: "archivedTodos",    label: "To-do",    kind: "todo" },
+    { key: "archivedToBuy",    label: "To-buy",   kind: "buy" },
+  ];
+  let inner = ""; let total = 0;
+  for(const s of sections){
+    const arr = p[s.key] || [];
+    if(!arr.length) continue;
+    total += arr.length;
+    inner += `<div style="font-weight:700;font-size:13px;margin:12px 0 4px;color:#444">${s.label} (${arr.length})</div>`;
+    for(const it of [...arr].reverse()){
+      const ts = it._archivedAt ? new Date(it._archivedAt).toLocaleDateString() : "";
+      inner += `<div class="archived-item" data-akind="${s.kind}" data-aid="${escapeHtml(it.id||"")}" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px">
+        <span style="flex:1;color:#888;text-decoration:line-through">${escapeHtml(it.title || "(untitled)")}</span>
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">${escapeHtml(ts)}</span>
+        <button class="ghost" data-archact="restore" style="padding:4px 8px;font-size:12px">Restore</button>
+        <button class="ghost danger" data-archact="purge" style="padding:4px 8px;font-size:12px">Delete</button>
+      </div>`;
+    }
+  }
+  if(!total) return "";
+  return `<details class="proj-section"><summary>Archived (${total})</summary><div class="body">${inner}</div></details>`;
 }
 
 /* ---------- Sub-render helpers ---------- */
@@ -1195,7 +1328,7 @@ function renderItems(items, opts={}){
         <div class="meta">
           ${tags.join(" ")}
           <span class="row-actions">
-            ${isShadow ? "" : `<button class="ghost" data-act="edit">Edit</button>`}
+            ${isShadow ? `<button class="ghost" data-act="hide" title="Hide this shared item from your view">Hide</button>` : `<button class="ghost" data-act="edit">Edit</button>`}
             ${isShadow ? "" : (it.needsConfirmation
               ? `<button class="ghost" data-act="confirm">Confirm</button>`
               : `<button class="ghost" data-act="needs">Needs confirm</button>`)}
@@ -1241,6 +1374,16 @@ function bindItemEvents(){
           openEditItemModal(proj, kind, it);
         } else if(act==="share"){
           openShareModal(proj, kind, it);
+        } else if(act==="hide"){
+          // Recipient dismisses a shared shadow item — adds its id to dismissedShared
+          // and removes it from the local lists. It will NOT reappear on next sync
+          // because migrate() filters dismissed shadow ids out of every project list.
+          if(!Array.isArray(state.dismissedShared)) state.dismissedShared = [];
+          if(!state.dismissedShared.includes(it.id)) state.dismissedShared.push(it.id);
+          const idx = arr.findIndex(x=>x.id===id);
+          if(idx>=0) arr.splice(idx,1);
+          save(); render();
+          toast(`Hidden from your view.`);
         }
       });
       btn.addEventListener("keydown", e=>{
@@ -1842,6 +1985,16 @@ function renderSettings(){
     </div>
     ` : ``}
 
+    ${(Array.isArray(state.dismissedShared) && state.dismissedShared.length) ? `
+    <div class="h2">Hidden shared items</div>
+    <div class="add-section">
+      <div class="hint">You have <b>${state.dismissedShared.length}</b> shared item${state.dismissedShared.length===1?"":"s"} hidden from your view. Restoring brings them back on the next sync.</div>
+      <div class="row" style="gap:8px">
+        <button id="btnRestoreShares">Restore all hidden shares</button>
+      </div>
+    </div>
+    ` : ``}
+
     ${isAdmin ? `
     <div class="h2">Users <span class="tag">admin</span></div>
     <div class="add-section">
@@ -1909,6 +2062,26 @@ function renderSettings(){
   const syncNow = document.getElementById("btnSyncNow");
   if(syncNow) syncNow.addEventListener("click", async ()=>{
     await pushRemoteNow(); toast("Pushed to cloud.");
+  });
+
+  const restoreShares = document.getElementById("btnRestoreShares");
+  if(restoreShares) restoreShares.addEventListener("click", async ()=>{
+    if(!confirm(`Restore all ${state.dismissedShared.length} hidden shared item(s)? They'll reappear in their projects.`)) return;
+    state.dismissedShared = [];
+    save();
+    // Re-fetch from server so the now-undismissed shadow items overlay back in.
+    if(sync.user && !sync.suspended){
+      try{
+        const remote = await fetchRemote();
+        if(remote && remote.data && Array.isArray(remote.data.projects)){
+          state = migrate(remote.data);
+          localStorage.setItem(STORE_KEY, JSON.stringify(state));
+          sync.lastRemoteAt = remote.updatedAt;
+        }
+      }catch(e){ console.warn("restore-shares refetch failed", e); }
+    }
+    render();
+    toast("Hidden shares restored.");
   });
 
   const changePw = document.getElementById("btnChangePw");
