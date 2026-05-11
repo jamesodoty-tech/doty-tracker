@@ -147,6 +147,13 @@
   .h1{font-size:22px;font-weight:800;margin:6px 0 10px}
   .h2{font-size:15px;font-weight:800;margin:18px 0 8px;letter-spacing:.02em;text-transform:uppercase;color:#222}
   .sub{color:var(--muted);font-size:13px}
+  .help-btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:24px;height:24px;border-radius:50%;border:1px solid var(--line);
+    background:#fff;color:#444;font-weight:700;font-size:13px;line-height:1;
+    margin-left:8px;cursor:pointer;vertical-align:middle;padding:0;
+  }
+  .help-btn:hover{background:#f5f5f5;border-color:var(--accent);color:var(--accent)}
 
   .datehead{
     margin:14px 0 6px;font-weight:800;font-size:15px;
@@ -635,6 +642,64 @@ async function initSync(){
     sync.suspended = false;
   }
 }
+
+/* ---------- Per-tab Help (? button next to each view's heading) ---------- */
+const HELP_TOPICS = {
+  today: {
+    title: "Today",
+    body: "What's scheduled for <b>today</b> across every project, plus anything flagged <b>Needs confirm</b> (waiting on a callback). Tap the box on the left of an item to check it off. Use the bar at the bottom of the screen to add new items.",
+  },
+  week: {
+    title: "Week",
+    body: "Every scheduled item for the next 7 days, grouped by day. Same item controls as Today (check off, Edit, Needs confirm, Share, Delete).",
+  },
+  projects: {
+    title: "Projects",
+    body: "Every job, as cards. Tap a card to open its full page. Need a new one? Type a name + (optional) deadline at the top and hit <b>Add project</b>.<br/><br/><b>Create for everyone</b> (admin or manager) fans the project out to every user with the same name — each user gets their own independent copy.",
+  },
+  project: {
+    title: "Inside a project",
+    body: "<b>Schedule</b>, <b>To-do</b>, <b>To-buy</b>, <b>Notes</b> — collapse/expand any section. Each item has Edit / Needs confirm / Share / Delete.<br/><br/>Deleted items and items you completed more than a day ago end up in <b>Archived</b> at the bottom — tap Restore to bring them back, or Delete to remove forever.",
+  },
+  time: {
+    title: "Time",
+    body: "Log hours against a project. Pick day / week / month at the top to change the period. Fill the form on this page to add a manual entry.",
+  },
+  settings: {
+    title: "Settings",
+    body: "<b>Cloud sync</b>: sign in/out and check status. <b>Change password</b>: self-serve.<br/><br/><b>Users</b> (admin): create / reset password / delete. Tick the <b>Manager</b> box for any user to give them broadcast (Create for everyone) ability.<br/><b>View other users</b> (admin): read-only peek at any user's tracker.<br/><br/><b>Backup &amp; restore</b>: export/import JSON.<br/><b>Hidden shared items</b>: restore items you previously tapped Hide on.<br/><b>Danger zone</b>: reset to starter / wipe.",
+  },
+};
+function helpButton(topic){
+  return `<button class="help-btn" data-help="${topic}" type="button" title="What's on this tab" aria-label="Help">?</button>`;
+}
+function showHelp(topic){
+  const t = HELP_TOPICS[topic];
+  if(!t) return;
+  const host = document.getElementById("modalHost");
+  host.innerHTML = `
+    <div class="auth-back" id="helpBack">
+      <div class="auth-card" style="max-width:420px;text-align:left">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Help</div>
+        <h2 style="margin:0 0 8px">${t.title}</h2>
+        <div class="sub" style="margin:0 0 14px">${t.body}</div>
+        <div class="row" style="justify-content:flex-end">
+          <button type="button" class="ghost primary" id="helpClose">Got it</button>
+        </div>
+      </div>
+    </div>`;
+  const close = ()=>{ host.innerHTML = ""; };
+  document.getElementById("helpClose").addEventListener("click", close);
+  document.getElementById("helpBack").addEventListener("click", e=>{
+    if(e.target.id === "helpBack") close();
+  });
+}
+// Delegated handler: any [data-help] button opens its topic.
+document.addEventListener("click", e => {
+  const btn = e.target.closest("[data-help]");
+  if(!btn) return;
+  showHelp(btn.dataset.help);
+});
 function signOutSync(){
   if(sync.viewAs) exitViewAs();
   clearAuth();
@@ -677,8 +742,9 @@ async function adminDeleteUser(username){
   if(!res.ok) throw new Error(j.error || "delete failed");
   return j;
 }
-async function adminBroadcastProject(name, deadline){
-  const res = await fetch(WORKER_URL + "/admin/projects/broadcast", {
+async function broadcastProject(name, deadline){
+  // Admin or manager.
+  const res = await fetch(WORKER_URL + "/projects/broadcast", {
     method: "POST",
     headers: { "content-type":"application/json", "authorization": authHeader() },
     body: JSON.stringify({ name, deadline: deadline || null }),
@@ -686,6 +752,16 @@ async function adminBroadcastProject(name, deadline){
   const j = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(j.error || "broadcast failed");
   return j; // { ok, addedTo: [...], skipped: [...] }
+}
+async function adminSetUserRole(username, role){
+  const res = await fetch(WORKER_URL + "/admin/users/set-role", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ username, role }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "set-role failed");
+  return j;
 }
 
 /* ---------- /users (any authed user) ---------- */
@@ -1032,7 +1108,7 @@ function renderToday(){
   const needsConfirm = collectNeedsConfirmActive();
   const todos = collectOpenTodos();
   const toBuy = collectOpenToBuy();
-  let html = `<div class="h1">Today · ${fmtLong(t)}</div>`;
+  let html = `<div class="h1">Today · ${fmtLong(t)} ${helpButton("today")}</div>`;
   if(overdue.length){
     html += `<div class="h2" style="color:var(--danger)">Overdue</div>`;
     html += renderItems(overdue, {showProject:true, showDate:true});
@@ -1062,7 +1138,7 @@ function renderWeek(){
     const d=new Date(today.getTime()+i*DAY_MS);
     days.push(todayISO(d));
   }
-  let html = `<div class="h1">Next 7 days</div>`;
+  let html = `<div class="h1">Next 7 days ${helpButton("week")}</div>`;
   let any=false;
   for(const iso of days){
     const items = collectScheduleByDate([iso]);
@@ -1077,15 +1153,16 @@ function renderWeek(){
 }
 
 function renderProjects(){
-  const isAdmin = sync.user && sync.user.role === "admin";
-  let html = `<div class="h1">Projects</div>`;
+  const role = sync.user && sync.user.role;
+  const canBroadcast = role === "admin" || role === "manager";
+  let html = `<div class="h1">Projects ${helpButton("projects")}</div>`;
   html += `<div class="add-section">
     <div class="row">
       <input type="text" id="newProjName" placeholder="New project name" />
       <input type="date" id="newProjDeadline" />
       <button id="newProjBtn">Add project</button>
     </div>
-    ${isAdmin ? `
+    ${canBroadcast ? `
     <label class="qa-needs" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px">
       <input type="checkbox" id="newProjBroadcast" />
       Create for everyone
@@ -1127,7 +1204,7 @@ function renderProjects(){
       btn.disabled = true;
       try{
         await pushRemoteNow();           // flush any pending local edits first
-        const r = await adminBroadcastProject(name, dl);
+        const r = await broadcastProject(name, dl);
         const remote = await fetchRemote();
         if(remote && remote.data && Array.isArray(remote.data.projects)){
           state = migrate(remote.data);
@@ -1162,7 +1239,7 @@ function renderProject(p){
     <button class="ghost" id="backBtn">← All projects</button>
     <div class="spacer" style="flex:1"></div>
   </div>`;
-  html += `<div class="h1">${escapeHtml(p.name)}</div>`;
+  html += `<div class="h1">${escapeHtml(p.name)} ${helpButton("project")}</div>`;
   html += `<div class="sub">${p.deadline?`Deadline: <strong>${fmtLong(p.deadline)}</strong> · ${daysUntil(p.deadline)}`:`No deadline set`}</div>`;
 
   html += `<details class="proj-section" open><summary>Schedule (${sched.filter(x=>!x.completed).length})</summary><div class="body">`;
@@ -1835,7 +1912,7 @@ function renderTime(){
   }
 
   app.innerHTML = `
-    <div class="h1">Time tracker</div>
+    <div class="h1">Time tracker ${helpButton("time")}</div>
     <div class="period-toggle" role="tablist">
       <button data-period="day"${timePeriod==="day"?' class="active"':""}>Day</button>
       <button data-period="week"${timePeriod==="week"?' class="active"':""}>Week</button>
@@ -1963,7 +2040,7 @@ function renderSettings(){
   const isAdmin = signedIn && me.role === "admin";
   const lastAt = sync.lastRemoteAt ? new Date(sync.lastRemoteAt).toLocaleString() : "never";
   app.innerHTML = `
-    <div class="h1">Settings</div>
+    <div class="h1">Settings ${helpButton("settings")}</div>
 
     <div class="h2">Cloud sync</div>
     <div class="add-section">
@@ -2172,15 +2249,22 @@ async function refreshUsersPanel(){
   panel.innerHTML = `
     <table class="users-table">
       <thead><tr>
-        <th>Username</th><th>Role</th><th>Last sync</th><th style="text-align:right">Actions</th>
+        <th>Username</th><th>Role</th><th style="text-align:center">Manager</th><th>Last sync</th><th style="text-align:right">Actions</th>
       </tr></thead>
       <tbody>
       ${users.map(u=>{
         const last = u.lastUpdatedAt ? new Date(u.lastUpdatedAt).toLocaleString() : "—";
         const self = sync.user && u.username === sync.user.username;
+        const isAdmin = u.role === "admin";
+        const isManager = u.role === "manager";
+        // Manager checkbox shown only for non-admin, non-self rows.
+        const mgrCell = (self || isAdmin)
+          ? `<span class="hint" style="font-size:11px">—</span>`
+          : `<input type="checkbox" data-act="toggle-manager" data-user="${escapeHtml(u.username)}" ${isManager?"checked":""} aria-label="Manager role" />`;
         return `<tr>
           <td><b>${escapeHtml(u.username)}</b>${self?' <span class="tag">you</span>':''}</td>
           <td><span class="tag">${escapeHtml(u.role)}</span></td>
+          <td style="text-align:center">${mgrCell}</td>
           <td>${escapeHtml(last)}</td>
           <td style="text-align:right">
             ${!self ? `<button class="ghost" data-act="view" data-user="${escapeHtml(u.username)}">View</button>` : ''}
@@ -2215,6 +2299,23 @@ async function refreshUsersPanel(){
         if(!confirm(`Really delete "${un}"?`)) return;
         try{ await adminDeleteUser(un); toast(`Deleted ${un}.`); refreshUsersPanel(); }
         catch(e){ alert("Delete failed: " + e.message); }
+      }
+    });
+  });
+  panel.querySelectorAll("input[data-act='toggle-manager']").forEach(cb=>{
+    cb.addEventListener("change", async ()=>{
+      const un = cb.dataset.user;
+      const newRole = cb.checked ? "manager" : "user";
+      cb.disabled = true;
+      try{
+        await adminSetUserRole(un, newRole);
+        toast(`${un} is now ${newRole}.`);
+        refreshUsersPanel();
+      }catch(e){
+        alert("Couldn't change role: " + (e.message || e));
+        cb.checked = !cb.checked; // revert
+      }finally{
+        cb.disabled = false;
       }
     });
   });
