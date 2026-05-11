@@ -121,6 +121,7 @@
   body.viewas nav.tabs button,
   body.viewas .iconbtn#timeBtn,
   body.viewas .iconbtn#punchBtn,
+  body.viewas .punchlist button,
   body.viewas #syncBadge{pointer-events:auto;opacity:1}
 
   /* Users panel (admin) */
@@ -380,6 +381,7 @@
   <button data-view="today" class="active">Today</button>
   <button data-view="week">Week</button>
   <button data-view="projects">Projects</button>
+  <button data-view="time">Time</button>
   <button data-view="settings">Settings</button>
 </nav>
 
@@ -478,10 +480,11 @@ function promptLogin({errorText=""}={}){
       <div class="auth-back" id="authBack">
         <form class="auth-card" id="authCard" autocomplete="off">
           <h2>Sign in to sync</h2>
-          <div class="sub">Username (lowercase, 3-20 chars, a-z 0-9 -) + password. First-time admin setup: use your bootstrap password.</div>
+          <div class="sub">Use the username and password your admin set up for you. (Lowercase username, 3-20 chars: a-z, 0-9, hyphen.)</div>
           <input type="text" id="authUser" autofocus autocomplete="username" placeholder="Username" autocapitalize="none" />
           <input type="password" id="authPw" autocomplete="current-password" placeholder="Password" />
           <div class="err" id="authErr">${escapeHtml(errorText)}</div>
+          <div class="hint" style="font-size:.85em;color:var(--muted);margin-top:8px;">First time here? Ask your admin to create an account for you.</div>
           <div class="row">
             <button type="button" class="ghost" id="authOffline">Work offline</button>
             <button type="submit" class="ghost primary" id="authOk">Unlock</button>
@@ -770,6 +773,31 @@ function load(){
 function migrate(s){
   if(!Array.isArray(s.timeEntries)) s.timeEntries = [];
   if(typeof s.settings !== "object" || !s.settings) s.settings = {};
+  // Normalize legacy time entries (old shape: {project:<name>, start, end, note}).
+  // Modern shape: {id, projectId, date, hours, note, createdAt}.
+  const projects = Array.isArray(s.projects) ? s.projects : [];
+  s.timeEntries = s.timeEntries.map(e => {
+    if(!e || typeof e !== "object") return e;
+    if(e.projectId && e.date && e.hours != null) return e; // already modern
+    const out = { ...e };
+    if(!out.id) out.id = uid();
+    // Resolve projectId from project name if needed
+    if(!out.projectId && typeof out.project === "string"){
+      const match = projects.find(p => (p.name||"").toLowerCase() === out.project.toLowerCase());
+      out.projectId = match ? match.id : null;
+    }
+    // Derive date + hours from start/end timestamps
+    if((out.date == null || out.hours == null) && out.start && out.end){
+      const ms0 = Date.parse(out.start), ms1 = Date.parse(out.end);
+      if(ms0 && ms1 && ms1 > ms0){
+        if(out.date == null) out.date = new Date(ms0).toISOString().slice(0,10);
+        if(out.hours == null) out.hours = +((ms1 - ms0) / 3600000).toFixed(2);
+        if(out.createdAt == null) out.createdAt = ms0;
+      }
+    }
+    delete out.start; delete out.end; delete out.project;
+    return out;
+  }).filter(e => e && e.date && e.hours != null);
   return s;
 }
 function save(){
