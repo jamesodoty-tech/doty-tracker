@@ -469,6 +469,17 @@ async function loginApi(username, password){
   if(!res.ok) throw new Error("unauthorized");
   return await res.json(); // { ok, role, username, bootstrapped? }
 }
+async function changeMyPassword(oldPassword, newPassword){
+  if(!sync.user) throw new Error("not signed in");
+  const res = await fetch(WORKER_URL + "/auth/change-password", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ oldPassword, newPassword }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "change failed");
+  return j;
+}
 function promptLogin({errorText=""}={}){
   return new Promise(resolve=>{
     const host = document.getElementById("modalHost");
@@ -650,6 +661,16 @@ async function adminDeleteUser(username){
   const j = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(j.error || "delete failed");
   return j;
+}
+async function adminBroadcastProject(name, deadline){
+  const res = await fetch(WORKER_URL + "/admin/projects/broadcast", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ name, deadline: deadline || null }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "broadcast failed");
+  return j; // { ok, addedTo: [...], skipped: [...] }
 }
 
 /* ---------- /users (any authed user) ---------- */
@@ -989,6 +1010,7 @@ function renderWeek(){
 }
 
 function renderProjects(){
+  const isAdmin = sync.user && sync.user.role === "admin";
   let html = `<div class="h1">Projects</div>`;
   html += `<div class="add-section">
     <div class="row">
@@ -996,6 +1018,13 @@ function renderProjects(){
       <input type="date" id="newProjDeadline" />
       <button id="newProjBtn">Add project</button>
     </div>
+    ${isAdmin ? `
+    <label class="qa-needs" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px">
+      <input type="checkbox" id="newProjBroadcast" />
+      Create for everyone
+      <span class="hint" style="margin-left:6px">(adds this project to every user's tracker)</span>
+    </label>
+    ` : ``}
     <div class="hint">Tap a project card to open its full page.</div>
   </div>`;
   for(const p of state.projects){
@@ -1019,10 +1048,39 @@ function renderProjects(){
   app.querySelectorAll(".projcard[data-open]").forEach(card=>{
     card.addEventListener("click", ()=>{ openProjectId = card.dataset.open; render(); window.scrollTo(0,0); });
   });
-  document.getElementById("newProjBtn").addEventListener("click",()=>{
+  document.getElementById("newProjBtn").addEventListener("click", async ()=>{
     const name = document.getElementById("newProjName").value.trim();
     const dl = document.getElementById("newProjDeadline").value || null;
     if(!name){ toast("Project name required."); return; }
+    const broadcastCb = document.getElementById("newProjBroadcast");
+    const broadcast = !!(broadcastCb && broadcastCb.checked);
+    if(broadcast){
+      // Admin path: fan out to every user via the worker, then refetch to merge.
+      const btn = document.getElementById("newProjBtn");
+      btn.disabled = true;
+      try{
+        await pushRemoteNow();           // flush any pending local edits first
+        const r = await adminBroadcastProject(name, dl);
+        const remote = await fetchRemote();
+        if(remote && remote.data && Array.isArray(remote.data.projects)){
+          state = migrate(remote.data);
+          localStorage.setItem(STORE_KEY, JSON.stringify(state));
+          sync.lastRemoteAt = remote.updatedAt;
+        }
+        document.getElementById("newProjName").value = "";
+        document.getElementById("newProjDeadline").value = "";
+        if(broadcastCb) broadcastCb.checked = false;
+        render();
+        const n = (r.addedTo||[]).length;
+        const skipped = (r.skipped||[]).length;
+        toast(`Created on ${n} user${n===1?"":"s"}${skipped?` (${skipped} already had it)`:""}.`);
+      }catch(e){
+        alert("Couldn't broadcast project: " + (e.message || e));
+      }finally{
+        btn.disabled = false;
+      }
+      return;
+    }
     state.projects.push({ id:uid(), name, deadline:dl, notes:"", schedule:[], todos:[], toBuy:[] });
     save(); render();
   });
@@ -1771,6 +1829,19 @@ function renderSettings(){
       </div>
     </div>
 
+    ${signedIn ? `
+    <div class="h2">Change password</div>
+    <div class="add-section">
+      <div class="hint">Update your sign-in password. You'll stay signed in on this device after the change.</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <input type="password" id="cpOld" placeholder="Current password" autocomplete="current-password" style="flex:1;min-width:140px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+        <input type="password" id="cpNew" placeholder="New password (min 4 chars)" autocomplete="new-password" style="flex:1;min-width:140px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+        <input type="password" id="cpConfirm" placeholder="Confirm new password" autocomplete="new-password" style="flex:1;min-width:140px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+        <button id="btnChangePw" class="ghost primary">Change password</button>
+      </div>
+    </div>
+    ` : ``}
+
     ${isAdmin ? `
     <div class="h2">Users <span class="tag">admin</span></div>
     <div class="add-section">
@@ -1783,7 +1854,7 @@ function renderSettings(){
           <input type="text" id="newUserPw" placeholder="initial password" autocapitalize="none" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--line);border-radius:8px" />
           <button id="btnCreateUser" class="ghost primary">Create user</button>
         </div>
-        <div class="hint" style="margin-top:6px">Share the username + password with them. They can change their password later (feature coming; for now ask admin to reset).</div>
+        <div class="hint" style="margin-top:6px">Share the username + password with them. They can change their own password from Settings &rarr; Change password after signing in.</div>
       </div>
     </div>
 
@@ -1838,6 +1909,32 @@ function renderSettings(){
   const syncNow = document.getElementById("btnSyncNow");
   if(syncNow) syncNow.addEventListener("click", async ()=>{
     await pushRemoteNow(); toast("Pushed to cloud.");
+  });
+
+  const changePw = document.getElementById("btnChangePw");
+  if(changePw) changePw.addEventListener("click", async ()=>{
+    const oldEl = document.getElementById("cpOld");
+    const newEl = document.getElementById("cpNew");
+    const confirmEl = document.getElementById("cpConfirm");
+    const oldPw = oldEl.value;
+    const newPw = newEl.value;
+    const confirm = confirmEl.value;
+    if(!oldPw){ alert("Enter your current password."); return; }
+    if(newPw.length < 4){ alert("New password must be at least 4 characters."); return; }
+    if(newPw !== confirm){ alert("New password and confirmation don't match."); return; }
+    if(newPw === oldPw){ alert("New password is the same as current."); return; }
+    changePw.disabled = true;
+    try{
+      await changeMyPassword(oldPw, newPw);
+      // Update stored creds so subsequent requests use the new password.
+      saveAuth({ ...sync.user, password: newPw });
+      oldEl.value = ""; newEl.value = ""; confirmEl.value = "";
+      toast("Password changed.");
+    }catch(e){
+      alert("Couldn't change password: " + (e.message || e));
+    }finally{
+      changePw.disabled = false;
+    }
   });
 
   if(isAdmin){
