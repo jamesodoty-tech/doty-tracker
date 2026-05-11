@@ -155,6 +155,22 @@
   }
   .help-btn:hover{background:#f5f5f5;border-color:var(--accent);color:var(--accent)}
 
+  .empty-cta{
+    border:1px dashed var(--line);border-radius:14px;
+    padding:22px 18px;margin:18px 0;text-align:center;background:#fafafa;
+  }
+  .empty-cta .icon{font-size:32px;margin-bottom:6px}
+  .empty-cta h3{margin:6px 0 6px;font-size:17px}
+  .empty-cta p{margin:6px 0;color:var(--ink);font-size:14px;line-height:1.45}
+  .empty-cta .hint{font-size:12px;color:var(--muted);margin-top:10px}
+  .empty-cta b{color:var(--accent)}
+  .empty-cta-banner{
+    border:1px dashed var(--line);border-radius:10px;
+    padding:10px 14px;margin:6px 0 12px;background:#fafafa;
+    font-size:13px;color:var(--ink);
+  }
+  .empty-cta-banner b{color:var(--accent)}
+
   .datehead{
     margin:14px 0 6px;font-weight:800;font-size:15px;
     border-bottom:1px solid var(--line);padding-bottom:4px;
@@ -1110,7 +1126,23 @@ function renderToday(){
   const needsConfirm = collectNeedsConfirmActive();
   const todos = collectOpenTodos();
   const toBuy = collectOpenToBuy();
+  const everythingEmpty = !overdue.length && !items.length && !needsConfirm.length && !todos.length && !toBuy.length;
   let html = `<div class="h1">Today · ${fmtLong(t)} ${helpButton("today")}</div>`;
+  if(everythingEmpty){
+    const hasAnyProjects = state.projects && state.projects.length > 0;
+    html += `<div class="empty-cta">
+      <div class="icon">👋</div>
+      <h3>Welcome${sync.user?", " + escapeHtml(sync.user.username):""} — your day is clear.</h3>
+      <p>To add your first task, use the <b>bar at the bottom of the screen</b>.</p>
+      <p>Pick a project, pick a type (Schedule / To-do / To-buy / Note), type it, hit <b>Add</b>.</p>
+      ${hasAnyProjects
+        ? `<p class="hint">Tap any tab heading's <b>?</b> button anytime for a quick refresher.</p>`
+        : `<p class="hint">No projects yet? Open the <b>Projects</b> tab to create one first.</p>`}
+    </div>`;
+    app.innerHTML = html;
+    bindItemEvents();
+    return;
+  }
   if(overdue.length){
     html += `<div class="h2" style="color:var(--danger)">Overdue</div>`;
     html += renderItems(overdue, {showProject:true, showDate:true});
@@ -1173,7 +1205,26 @@ function renderProjects(){
     ` : ``}
     <div class="hint">Tap a project card to open its full page.</div>
   </div>`;
-  for(const p of state.projects){
+  // Empty-state banner: no projects at all, or projects exist but all are empty.
+  const projectsList = state.projects || [];
+  const allEmpty = projectsList.length > 0 && projectsList.every(p =>
+    (!p.schedule || p.schedule.length === 0) &&
+    (!p.todos    || p.todos.length === 0) &&
+    (!p.toBuy    || p.toBuy.length === 0) &&
+    (!p.notes    || !String(p.notes).trim())
+  );
+  if(projectsList.length === 0){
+    html += `<div class="empty-cta">
+      <div class="icon">📁</div>
+      <h3>No projects yet.</h3>
+      <p>Type a name (and optional deadline) above and hit <b>Add project</b> to create your first one.</p>
+    </div>`;
+  } else if(allEmpty){
+    html += `<div class="empty-cta-banner">
+      Your projects are set up — now add items to them. Use the <b>bar at the bottom of the screen</b>: pick a project + type, then type and tap Add. Or tap a project card to open its full page.
+    </div>`;
+  }
+  for(const p of projectsList){
     const counts = projectCounts(p);
     const dlClass = isDeadlineSoon(p.deadline) ? " deadline-soon":"";
     html += `<div class="projcard${dlClass}" data-open="${p.id}">
