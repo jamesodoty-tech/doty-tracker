@@ -1366,10 +1366,18 @@ function bindItemEvents(){
         } else if(act==="confirm"){
           it.needsConfirmation = false; save(); render();
         } else if(act==="delete"){
-          if(!confirm("Delete this item?")) return;
+          if(!confirm("Move to Archive? You can restore it later from the Archived section.")) return;
           const idx = arr.findIndex(x=>x.id===id);
-          if(idx>=0) arr.splice(idx,1);
+          if(idx<0) return;
+          const [removed] = arr.splice(idx,1);
+          // Soft-delete: route to the archive so the user can restore it.
+          // (Permanent delete is a separate action available inside the archive.)
+          removed._archivedAt = Date.now();
+          const archKey = kind === "schedule" ? "archivedSchedule" : kind === "buy" ? "archivedToBuy" : "archivedTodos";
+          proj[archKey] = proj[archKey] || [];
+          proj[archKey].push(removed);
           save(); render();
+          toast(`Moved to Archive.`);
         } else if(act==="edit"){
           openEditItemModal(proj, kind, it);
         } else if(act==="share"){
