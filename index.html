@@ -529,9 +529,9 @@ async function pushRemoteNow(){
     const res = await fetch(WORKER_URL + "/data", {
       method: "PUT",
       headers: { "content-type":"application/json", "authorization": authHeader() },
-      // v4.4: send prevUpdatedAt so the worker can reject blind overwrites.
+      // Send prevUpdatedAt so the worker can reject blind overwrites.
       // If the stored updatedAt differs, server returns 409 and we refresh
-      // from remote instead of clobbering (e.g. MCP) writes.
+      // from remote instead of clobbering concurrent web-session writes.
       body: JSON.stringify({ data: state, prevUpdatedAt: sync.lastRemoteAt }),
     });
     if(res.status === 401){
@@ -541,7 +541,7 @@ async function pushRemoteNow(){
     }
     if(res.status === 409){
       // Server has newer data than we expected. Refetch + replace local state
-      // so we don't clobber concurrent writes (typically from MCP).
+      // so we don't clobber writes from another browser session.
       console.warn("push conflict (409) — refreshing from server");
       try{
         const remote = await fetchRemote();
