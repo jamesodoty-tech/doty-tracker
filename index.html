@@ -466,6 +466,9 @@
     <div class="qa-row" id="qaBuyRow" style="display:none">
       <input type="url" id="qaUrl" placeholder="Product link (optional)" autocomplete="off" inputmode="url" />
     </div>
+    <div class="qa-row" id="qaShareRow" style="display:none">
+      <label class="qa-needs"><input type="checkbox" id="qaShareAll" checked /> Share with everyone</label>
+    </div>
     <div class="qa-row">
       <input type="text" id="qaText" placeholder="What to add..." autocomplete="off" />
       <button class="qa-add" id="qaAdd">Add</button>
@@ -485,7 +488,7 @@
 const STORE_KEY = "doty.tracker.v1";
 const AUTH_KEY  = "doty.tracker.auth";
 const WORKER_URL = "https://doty-tracker-api.james-5aa.workers.dev";
-const APP_VERSION = "5.6";
+const APP_VERSION = "6.0";
 const APP_BUILD_DATE = "2026-05-14";
 const ARCHIVE_AFTER_HOURS = 24;
 
@@ -729,7 +732,7 @@ const HELP_TOPICS = {
   },
   time: {
     title: "Time",
-    body: "Log hours against a project. Pick day / week / month at the top to change the period. Fill the form on this page to add a manual entry.",
+    body: "Log hours against a project. Pick day / week / month at the top to change the period. Fill the form on this page to add a manual entry.<br/><br/><b>Admins &amp; managers</b> also get a <b>Team time</b> section: log hours on behalf of any user, and see a consolidated report of everyone's hours by project.",
   },
   settings: {
     title: "Settings",
@@ -827,6 +830,35 @@ async function adminSetUserRole(username, role){
   });
   const j = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(j.error || "set-role failed");
+  return j;
+}
+async function broadcastNote(projectName, text){
+  // Admin or manager — appends a note to every user's same-named project.
+  const res = await fetch(WORKER_URL + "/projects/broadcast-note", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ project: projectName, text }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "broadcast-note failed");
+  return j;
+}
+async function getAllTime(){
+  // Admin or manager — every user's time entries with project names resolved.
+  const res = await fetch(WORKER_URL + "/time/all", { headers: { "authorization": authHeader() }});
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "time report failed");
+  return j.entries || [];
+}
+async function logTimeForUser(username, projectName, date, hours, note){
+  // Admin or manager — log a time entry into another user's tracker.
+  const res = await fetch(WORKER_URL + "/time/for-user", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ username, projectName, date, hours, note: note || "" }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "log-time failed");
   return j;
 }
 
@@ -1108,26 +1140,31 @@ function safeUrl(u){
   u = String(u||"").trim();
   return /^https?:\/\/[^\s]+$/i.test(u) ? u : null;
 }
-function quickAddStructured({projectId, kind, title, date, time, needs, subcontractor, url}){
+function quickAddStructured({projectId, kind, title, date, time, needs, subcontractor, url, shareAll}){
   const p = state.projects.find(x => x.id === projectId);
   if(!p){ toast("Pick a project."); return false; }
   title = (title||"").trim();
   if(!title){ toast("Type what you want to add."); return false; }
+  const shareSuffix = shareAll ? " · shared with everyone" : "";
   if(kind === "schedule"){
     if(!date){ toast("Pick a date for schedule items."); return false; }
     const item = sItem(title, date, time||null, !!needs);
     if(subcontractor) item.subcontractor = true;
+    if(shareAll) item.sharedWith = ["*"];
     p.schedule.push(item);
-    toast(`Added to ${p.name} on ${fmtShort(date)}${time?" "+fmtTime12(time):""}`);
+    toast(`Added to ${p.name} on ${fmtShort(date)}${time?" "+fmtTime12(time):""}${shareSuffix}`);
   } else if(kind === "todo"){
-    p.todos.push(tItem(title, !!needs));
-    toast(`Added to ${p.name} to-do`);
+    const item = tItem(title, !!needs);
+    if(shareAll) item.sharedWith = ["*"];
+    p.todos.push(item);
+    toast(`Added to ${p.name} to-do${shareSuffix}`);
   } else if(kind === "buy"){
     const item = { id:uid(), title, qty:null, completed:false, needsConfirmation:!!needs };
     const nu = normalizeUrl(url);
     if(nu) item.url = nu;
+    if(shareAll) item.sharedWith = ["*"];
     p.toBuy.push(item);
-    toast(`Added to ${p.name} to-buy`);
+    toast(`Added to ${p.name} to-buy${shareSuffix}`);
   } else if(kind === "note"){
     p.notes = (p.notes ? p.notes + "\n" : "") + title;
     const preview = title.length > 40 ? title.slice(0, 40) + "…" : title;
@@ -1615,7 +1652,9 @@ function renderItems(items, opts={}){
     const isSharedByMe = !isShadow && Array.isArray(it.sharedWith) && it.sharedWith.length > 0;
     if(isShadow) tags.push(`<span class="tag shared">From ${escapeHtml(it.sharedFrom)}</span>`);
     if(isSharedByMe) tags.push(`<span class="tag shared">Shared with ${escapeHtml(it.sharedWith.join(", "))}</span>`);
-    const canShare = !isShadow && (kind==="schedule" || kind==="todo");
+    const canShare = !isShadow;  // schedule / todo / to-buy can all be manually shared
+    const myRole = sync.user && sync.user.role;
+    const canEditShared = isShadow && (myRole === "admin" || myRole === "manager");
     const displayTitle = it._displayTitle || it.title;
     return `<div class="item ${it.completed?"done":""} ${isShadow?"shadow":""}" data-id="${it.id}" data-kind="${kind}" data-proj="${projId}">
       <div class="check" role="checkbox" aria-checked="${it.completed?"true":"false"}" tabindex="0" data-act="toggle"></div>
@@ -1625,7 +1664,9 @@ function renderItems(items, opts={}){
         <div class="meta">
           ${tags.join(" ")}
           <span class="row-actions">
-            ${isShadow ? `<button class="ghost" data-act="hide" title="Hide this shared item from your view">Hide</button>` : `<button class="ghost" data-act="edit">Edit</button>`}
+            ${isShadow
+              ? `${canEditShared ? `<button class="ghost" data-act="edit">Edit</button>` : ""}<button class="ghost" data-act="hide" title="Hide this shared item from your view">Hide</button>`
+              : `<button class="ghost" data-act="edit">Edit</button>`}
             ${isShadow ? "" : (it.needsConfirmation
               ? `<button class="ghost" data-act="confirm">Confirm</button>`
               : `<button class="ghost" data-act="needs">Needs confirm</button>`)}
@@ -1711,15 +1752,17 @@ function openEditItemModal(proj, kind, it){
   ].map(([v,l])=>`<option value="${v}"${kind===v?" selected":""}>${l}</option>`).join("");
   const isSched = kind==="schedule";
   const isBuy = kind==="buy";
+  const isShadow = !!it.sharedFrom;  // editing someone else's shared item (admin/manager)
   host.innerHTML = `
     <div class="modal-backdrop" id="editBack">
       <div class="modal" role="dialog" aria-modal="true">
-        <h3>Edit item</h3>
+        <h3>Edit item${isShadow?` <span class="tag shared">shared from ${escapeHtml(it.sharedFrom)}</span>`:""}</h3>
+        ${isShadow ? `<div class="hint" style="margin-bottom:8px">You're editing a shared item — your changes sync back to ${escapeHtml(it.sharedFrom)} and everyone it's shared with. Project and category are locked.</div>` : ""}
         <label>Project
-          <select id="eProj">${projOptions}</select>
+          <select id="eProj"${isShadow?" disabled":""}>${projOptions}</select>
         </label>
         <label>Category
-          <select id="eKind">${kindOptions}</select>
+          <select id="eKind"${isShadow?" disabled":""}>${kindOptions}</select>
         </label>
         <label>Title
           <input type="text" id="eTitle" value="${escapeHtml(it.title||"")}" />
@@ -2073,6 +2116,8 @@ function shiftPeriod(dir){
   timeAnchorISO = todayISO(a);
 }
 function renderTime(){
+  const myRole = sync.user && sync.user.role;
+  const isMgr = myRole === "admin" || myRole === "manager";
   const { startISO, endISO } = periodRange(timePeriod, timeAnchorISO);
   const entries = state.timeEntries.filter(e => e.date >= startISO && e.date <= endISO);
   const totalHours = entries.reduce((s,e)=>s+(+e.hours||0),0);
@@ -2191,6 +2236,24 @@ function renderTime(){
     </div>
     <div class="h2">Entries</div>
     ${entriesHtml}
+    ${isMgr ? `
+    <div class="h2">Team time <span class="tag">${escapeHtml(myRole)}</span></div>
+    <div class="add-section">
+      <div class="hint">Log time on behalf of any user. If they've already logged their own, it still shows in the report below — no need to re-enter.</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <select id="mtUser" style="flex:1;min-width:110px;padding:8px;border:1px solid var(--line);border-radius:8px"></select>
+        <input type="text" id="mtProj" placeholder="Project name" style="flex:1;min-width:110px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px">
+        <input type="date" id="mtDate" value="${todayISO()}" style="min-width:130px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+        <input type="number" id="mtHours" placeholder="Hours" step="0.25" min="0" style="max-width:100px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+        <input type="text" id="mtNote" placeholder="Note (optional)" style="flex:1;min-width:110px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+        <button id="mtLog" class="ghost primary">Log for user</button>
+      </div>
+    </div>
+    <div class="h2">Team time report</div>
+    <div id="teamReport" class="proj-hours"><div class="empty">Loading team time…</div></div>
+    ` : ""}
   `;
 
   app.querySelectorAll(".period-toggle button").forEach(b=>{
@@ -2231,6 +2294,74 @@ function renderTime(){
       });
     });
   });
+
+  // Manager / admin: log time for any user + consolidated team report.
+  if(isMgr){
+    fetchUsersList().then(users=>{
+      const sel = document.getElementById("mtUser");
+      if(sel) sel.innerHTML = users.map(u=>`<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join("");
+    }).catch(()=>{});
+    const mtLog = document.getElementById("mtLog");
+    if(mtLog) mtLog.addEventListener("click", async ()=>{
+      const un = document.getElementById("mtUser").value;
+      const pn = document.getElementById("mtProj").value.trim();
+      const d  = document.getElementById("mtDate").value;
+      const h  = +document.getElementById("mtHours").value;
+      const n  = document.getElementById("mtNote").value.trim();
+      if(!un){ toast("Pick a user."); return; }
+      if(!pn){ toast("Enter a project name."); return; }
+      if(!d){ toast("Pick a date."); return; }
+      if(!h || h<=0){ toast("Enter hours > 0."); return; }
+      mtLog.disabled = true;
+      try{
+        await logTimeForUser(un, pn, d, h, n);
+        document.getElementById("mtProj").value = "";
+        document.getElementById("mtHours").value = "";
+        document.getElementById("mtNote").value = "";
+        toast(`Logged ${fmtHours(h)} for ${un}.`);
+        loadTeamReport();
+      }catch(e){
+        alert("Couldn't log time: " + (e.message || e));
+      }finally{
+        mtLog.disabled = false;
+      }
+    });
+    loadTeamReport();
+  }
+}
+
+async function loadTeamReport(){
+  const el = document.getElementById("teamReport");
+  if(!el) return;
+  try{
+    const entries = await getAllTime();
+    if(!entries.length){
+      el.innerHTML = `<div class="empty">No time logged by anyone yet.</div>`;
+      return;
+    }
+    // Group: username -> { total, projs: { projectName -> hours } }
+    const byUser = {};
+    for(const e of entries){
+      const u = byUser[e.username] = byUser[e.username] || { total:0, projs:{} };
+      const h = +e.hours || 0;
+      u.total += h;
+      u.projs[e.projectName] = (u.projs[e.projectName] || 0) + h;
+    }
+    let html = "";
+    for(const un of Object.keys(byUser).sort()){
+      const u = byUser[un];
+      html += `<div style="margin:12px 0 4px;font-weight:800">${escapeHtml(un)} — ${fmtHours(u.total)}</div>`;
+      for(const pn of Object.keys(u.projs).sort()){
+        html += `<div class="row">
+          <span class="name" style="padding-left:12px">${escapeHtml(pn)}</span>
+          <span class="h">${fmtHours(u.projs[pn])}</span>
+        </div>`;
+      }
+    }
+    el.innerHTML = html;
+  }catch(e){
+    el.innerHTML = `<div class="empty">Couldn't load team time: ${escapeHtml(e.message || String(e))}</div>`;
+  }
 }
 
 function openEditTimeModal(entry){
@@ -2598,6 +2729,10 @@ function syncQuickAddBar(){
   const kind = document.getElementById("qaKind").value;
   document.getElementById("qaSchedRow").style.display = (kind==="schedule") ? "flex" : "none";
   document.getElementById("qaBuyRow").style.display = (kind==="buy") ? "flex" : "none";
+  // "Share with everyone" is admin/manager only.
+  const role = sync.user && sync.user.role;
+  const canShare = role === "admin" || role === "manager";
+  document.getElementById("qaShareRow").style.display = canShare ? "flex" : "none";
 }
 function bindQuickAdd(){
   document.getElementById("qaKind").addEventListener("change", syncQuickAddBar);
@@ -2610,7 +2745,7 @@ function bindQuickAdd(){
   document.getElementById("qaAdd").addEventListener("click", doQuickAdd);
   document.getElementById("qaDate").value = todayISO();
 }
-function doQuickAdd(){
+async function doQuickAdd(){
   const proj = document.getElementById("qaProj");
   const kind = document.getElementById("qaKind").value;
   const title = document.getElementById("qaText").value;
@@ -2619,6 +2754,38 @@ function doQuickAdd(){
   const needs = document.getElementById("qaNeeds").checked;
   const sub = document.getElementById("qaSub").checked;
   const url = document.getElementById("qaUrl").value;
+  const role = sync.user && sync.user.role;
+  const canShare = role === "admin" || role === "manager";
+  const shareAll = canShare && document.getElementById("qaShareAll").checked;
+
+  // Notes can't carry a per-item sharedWith (they're project-level text), so a
+  // shared note is broadcast-appended to every user's same-named project.
+  if(kind === "note" && shareAll){
+    const projObj = state.projects.find(x => x.id === proj.value);
+    const text = (title||"").trim();
+    if(!projObj){ toast("Pick a project."); return; }
+    if(!text){ toast("Type the note."); return; }
+    const addBtn = document.getElementById("qaAdd");
+    addBtn.disabled = true;
+    try{
+      await broadcastNote(projObj.name, text);
+      const remote = await fetchRemote();
+      if(remote && remote.data && Array.isArray(remote.data.projects)){
+        state = migrate(remote.data);
+        localStorage.setItem(STORE_KEY, JSON.stringify(state));
+        sync.lastRemoteAt = remote.updatedAt;
+      }
+      document.getElementById("qaText").value = "";
+      render();
+      toast(`Note shared with everyone on ${projObj.name}.`);
+    }catch(e){
+      alert("Couldn't share note: " + (e.message || e));
+    }finally{
+      addBtn.disabled = false;
+    }
+    return;
+  }
+
   const ok = quickAddStructured({
     projectId: proj.value,
     kind, title,
@@ -2627,6 +2794,7 @@ function doQuickAdd(){
     needs,
     subcontractor: kind==="schedule" ? sub : false,
     url: kind==="buy" ? (url.trim()||null) : null,
+    shareAll: (kind !== "note") && shareAll,
   });
   if(ok){
     document.getElementById("qaText").value = "";
