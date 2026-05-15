@@ -133,11 +133,11 @@
 
   nav.tabs{
     position:sticky;top:0;z-index:40;
-    display:grid;grid-template-columns:repeat(5,1fr);
+    display:grid;grid-template-columns:repeat(6,1fr);
     background:#fff;border-bottom:1px solid var(--line);
   }
   nav.tabs button{
-    background:#fff;border:0;padding:14px 4px;font-weight:700;font-size:13px;
+    background:#fff;border:0;padding:14px 2px;font-weight:700;font-size:12px;
     border-bottom:3px solid transparent;color:#444;cursor:pointer;
     white-space:nowrap;
   }
@@ -170,6 +170,36 @@
     font-size:13px;color:var(--ink);
   }
   .empty-cta-banner b{color:var(--accent)}
+
+  /* Phase 6 — subcontractor tag, to-buy link, calendar */
+  .tag.sub{background:#e8d5ff;color:#5b21b6}
+  .buy-link{
+    display:inline-block;font-size:12px;color:var(--accent);
+    margin:2px 0 0;text-decoration:none;
+  }
+  .buy-link:hover{text-decoration:underline}
+  .cal-nav{display:flex;align-items:center;gap:8px;margin:8px 0 12px}
+  .cal-nav .cal-month{flex:1;font-weight:800;font-size:16px;text-align:center}
+  .cal-nav button{padding:6px 12px}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+  .cal-dow{
+    text-align:center;font-size:10px;font-weight:700;color:var(--muted);
+    text-transform:uppercase;padding:4px 0;
+  }
+  .cal-cell{
+    min-height:74px;border:1px solid var(--line);border-radius:6px;
+    padding:3px;background:#fff;overflow:hidden;
+  }
+  .cal-cell.cal-out{background:#fafafa;opacity:.5}
+  .cal-cell.cal-today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+  .cal-num{font-size:11px;font-weight:700;color:#444;margin-bottom:2px}
+  .cal-item{
+    font-size:9px;line-height:1.3;background:#fff4c2;border-radius:3px;
+    padding:1px 3px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .cal-item.done{background:#eee;color:#999;text-decoration:line-through}
+  .cal-item.sub{background:#e8d5ff;color:#5b21b6}
+  .cal-more{font-size:9px;color:var(--muted);padding:0 3px}
 
   .datehead{
     margin:14px 0 6px;font-weight:800;font-size:15px;
@@ -399,6 +429,7 @@
 <nav class="tabs" id="tabs">
   <button data-view="today" class="active">Today</button>
   <button data-view="week">Week</button>
+  <button data-view="calendar">Calendar</button>
   <button data-view="projects">Projects</button>
   <button data-view="time">Time</button>
   <button data-view="settings">Settings</button>
@@ -421,6 +452,10 @@
       <input type="date" id="qaDate" aria-label="Date" />
       <input type="time" id="qaTime" aria-label="Time" />
       <label class="qa-needs"><input type="checkbox" id="qaNeeds" /> Needs&nbsp;confirm</label>
+      <label class="qa-needs"><input type="checkbox" id="qaSub" /> Sub</label>
+    </div>
+    <div class="qa-row" id="qaBuyRow" style="display:none">
+      <input type="url" id="qaUrl" placeholder="Product link (optional)" autocomplete="off" inputmode="url" />
     </div>
     <div class="qa-row">
       <input type="text" id="qaText" placeholder="What to add..." autocomplete="off" />
@@ -441,7 +476,7 @@
 const STORE_KEY = "doty.tracker.v1";
 const AUTH_KEY  = "doty.tracker.auth";
 const WORKER_URL = "https://doty-tracker-api.james-5aa.workers.dev";
-const APP_VERSION = "5.4";
+const APP_VERSION = "5.5";
 const APP_BUILD_DATE = "2026-05-11";
 const ARCHIVE_AFTER_HOURS = 24;
 
@@ -670,6 +705,10 @@ const HELP_TOPICS = {
   week: {
     title: "Week",
     body: "Every scheduled item for the next 7 days, grouped by day. Same item controls as Today (check off, Edit, Needs confirm, Share, Delete).",
+  },
+  calendar: {
+    title: "Calendar",
+    body: "A month view of every <b>scheduled item</b> across all projects. Tap <b>‹ ›</b> to change months, or <b>Today</b> to jump back. Days outside the current month are dimmed; today is outlined. Each day shows up to 3 items — anything beyond that shows as '+N more'.",
   },
   projects: {
     title: "Projects",
@@ -1011,6 +1050,7 @@ let view = state.view || "today";
 let openProjectId = null;
 let timePeriod = "week";
 let timeAnchorISO = todayISO();
+let calendarAnchorISO = todayISO();
 let qaLastProjectId = state.projects[0]?.id || null;
 
 /* ---------- Auto-archive (soft) ---------- */
@@ -1048,20 +1088,35 @@ function archiveSweep(){
 }
 
 /* ---------- Structured quick-add ---------- */
-function quickAddStructured({projectId, kind, title, date, time, needs}){
+function normalizeUrl(u){
+  u = String(u||"").trim();
+  if(!u) return "";
+  if(!/^https?:\/\//i.test(u)) u = "https://" + u;
+  return u;
+}
+function safeUrl(u){
+  u = String(u||"").trim();
+  return /^https?:\/\/[^\s]+$/i.test(u) ? u : null;
+}
+function quickAddStructured({projectId, kind, title, date, time, needs, subcontractor, url}){
   const p = state.projects.find(x => x.id === projectId);
   if(!p){ toast("Pick a project."); return false; }
   title = (title||"").trim();
   if(!title){ toast("Type what you want to add."); return false; }
   if(kind === "schedule"){
     if(!date){ toast("Pick a date for schedule items."); return false; }
-    p.schedule.push(sItem(title, date, time||null, !!needs));
+    const item = sItem(title, date, time||null, !!needs);
+    if(subcontractor) item.subcontractor = true;
+    p.schedule.push(item);
     toast(`Added to ${p.name} on ${fmtShort(date)}${time?" "+fmtTime12(time):""}`);
   } else if(kind === "todo"){
     p.todos.push(tItem(title, !!needs));
     toast(`Added to ${p.name} to-do`);
   } else if(kind === "buy"){
-    p.toBuy.push({ id:uid(), title, qty:null, completed:false, needsConfirmation:!!needs });
+    const item = { id:uid(), title, qty:null, completed:false, needsConfirmation:!!needs };
+    const nu = normalizeUrl(url);
+    if(nu) item.url = nu;
+    p.toBuy.push(item);
     toast(`Added to ${p.name} to-buy`);
   } else if(kind === "note"){
     p.notes = (p.notes ? p.notes + "\n" : "") + title;
@@ -1113,6 +1168,7 @@ function render(){
   }
   if(view==="today") renderToday();
   else if(view==="week") renderWeek();
+  else if(view==="calendar") renderCalendar();
   else if(view==="projects") renderProjects();
   else if(view==="time") renderTime();
   else if(view==="settings") renderSettings();
@@ -1184,6 +1240,79 @@ function renderWeek(){
   if(!any) html += `<div class="empty">No scheduled items in the next 7 days.</div>`;
   app.innerHTML = html;
   bindItemEvents();
+}
+
+function renderCalendar(){
+  const anchor = parseISO(calendarAnchorISO);
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const monthStart = new Date(year, month, 1);
+  const monthLabel = monthStart.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  // Map ISO date -> scheduled items across all projects.
+  const byDate = {};
+  for(const p of state.projects){
+    for(const it of (p.schedule || [])){
+      if(!it.date) continue;
+      (byDate[it.date] = byDate[it.date] || []).push({
+        projName: p.name, title: it.title, time: it.time,
+        completed: !!it.completed, subcontractor: !!it.subcontractor,
+      });
+    }
+  }
+  const firstDow = monthStart.getDay();              // 0=Sun
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const lastDow = new Date(year, month, daysInMonth).getDay();
+  const gridStart = new Date(year, month, 1 - firstDow);
+  const totalCells = firstDow + daysInMonth + (6 - lastDow);
+  const today = todayISO();
+
+  let html = `<div class="h1">Calendar ${helpButton("calendar")}</div>`;
+  html += `<div class="cal-nav">
+    <button class="ghost" id="calPrev" aria-label="Previous month">‹</button>
+    <div class="cal-month">${escapeHtml(monthLabel)}</div>
+    <button class="ghost" id="calNext" aria-label="Next month">›</button>
+    <button class="ghost" id="calToday">Today</button>
+  </div>`;
+  html += `<div class="cal-grid">`;
+  for(const d of ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]){
+    html += `<div class="cal-dow">${d}</div>`;
+  }
+  for(let i = 0; i < totalCells; i++){
+    const cellDate = new Date(gridStart);
+    cellDate.setDate(gridStart.getDate() + i);
+    const iso = todayISO(cellDate);
+    const inMonth = cellDate.getMonth() === month;
+    const isToday = iso === today;
+    const items = (byDate[iso] || []).slice().sort((a,b)=>{
+      if(a.time && b.time) return a.time.localeCompare(b.time);
+      if(a.time) return -1; if(b.time) return 1; return 0;
+    });
+    let cell = `<div class="cal-cell${inMonth?"":" cal-out"}${isToday?" cal-today":""}">`;
+    cell += `<div class="cal-num">${cellDate.getDate()}</div>`;
+    const shown = items.slice(0, 3);
+    for(const it of shown){
+      const cls = "cal-item" + (it.completed ? " done" : it.subcontractor ? " sub" : "");
+      cell += `<div class="${cls}" title="${escapeHtml(it.projName + ": " + it.title)}">${it.time?escapeHtml(fmtTime12(it.time))+" ":""}${escapeHtml(it.title)}</div>`;
+    }
+    if(items.length > shown.length){
+      cell += `<div class="cal-more">+${items.length - shown.length} more</div>`;
+    }
+    cell += `</div>`;
+    html += cell;
+  }
+  html += `</div>`;
+  app.innerHTML = html;
+  document.getElementById("calPrev").addEventListener("click", ()=>{
+    const a = parseISO(calendarAnchorISO); a.setDate(1); a.setMonth(a.getMonth()-1);
+    calendarAnchorISO = todayISO(a); renderCalendar();
+  });
+  document.getElementById("calNext").addEventListener("click", ()=>{
+    const a = parseISO(calendarAnchorISO); a.setDate(1); a.setMonth(a.getMonth()+1);
+    calendarAnchorISO = todayISO(a); renderCalendar();
+  });
+  document.getElementById("calToday").addEventListener("click", ()=>{
+    calendarAnchorISO = todayISO(); renderCalendar();
+  });
 }
 
 function renderProjects(){
@@ -1443,6 +1572,7 @@ function renderItems(items, opts={}){
     if(it.time) tags.push(`<span class="tag time">${fmtTime12(it.time)}</span>`);
     if(opts.showDate && it.date) tags.push(`<span class="tag">${fmtShort(it.date)}</span>`);
     if(it.needsConfirmation) tags.push(`<span class="tag warn">Needs confirmation</span>`);
+    if(it.subcontractor) tags.push(`<span class="tag sub">Subcontractor</span>`);
     if(kind==="todo" && !opts.showProject) tags.push(`<span class="tag kind">To-do</span>`);
     if(kind==="buy"  && !opts.showProject) tags.push(`<span class="tag kind">To-buy</span>`);
     const isShadow = !!it.sharedFrom;
@@ -1455,6 +1585,7 @@ function renderItems(items, opts={}){
       <div class="check" role="checkbox" aria-checked="${it.completed?"true":"false"}" tabindex="0" data-act="toggle"></div>
       <div class="body">
         <div class="title">${escapeHtml(displayTitle)}</div>
+        ${(kind==="buy" && safeUrl(it.url)) ? `<a class="buy-link" href="${escapeHtml(safeUrl(it.url))}" target="_blank" rel="noopener noreferrer">🔗 Open product link</a>` : ""}
         <div class="meta">
           ${tags.join(" ")}
           <span class="row-actions">
@@ -1564,10 +1695,16 @@ function openEditItemModal(proj, kind, it){
           <label>Time
             <input type="time" id="eTime" value="${it.time||""}" />
           </label>
+          <label class="inline" style="display:flex;gap:6px;align-items:center;margin-top:6px">
+            <input type="checkbox" id="eSub" ${it.subcontractor?"checked":""} /> Subcontractor
+          </label>
         </div>
         <div id="eBuyFields" style="${isBuy?"":"display:none"}">
           <label>Quantity
             <input type="number" id="eQty" min="1" value="${it.qty||""}" />
+          </label>
+          <label>Product link
+            <input type="url" id="eUrl" value="${escapeHtml(it.url||"")}" placeholder="https://..." />
           </label>
         </div>
         <label class="inline" style="display:flex;gap:6px;align-items:center;margin-top:10px">
@@ -1592,20 +1729,26 @@ function openEditItemModal(proj, kind, it){
     const newTitle = document.getElementById("eTitle").value.trim();
     const newNeeds = document.getElementById("eNeeds").checked;
     if(!newTitle){ toast("Title required."); return; }
-    let newItem;
+    // Start from the existing item so unknown fields (sharedWith, completionsByUser,
+    // sharedFrom, etc.) survive the edit. Strip kind-specific fields, then re-apply.
+    const newItem = { ...it };
+    delete newItem.date; delete newItem.time; delete newItem.qty;
+    delete newItem.subcontractor; delete newItem.url;
+    newItem.title = newTitle;
+    newItem.needsConfirmation = newNeeds;
+    newItem.completed = !!it.completed;
+    newItem.completedAt = it.completedAt || null;
     if(newKind==="schedule"){
       const d = document.getElementById("eDate").value;
       const tm = document.getElementById("eTime").value || null;
       if(!d){ toast("Date required for schedule."); return; }
-      newItem = { id: it.id, title:newTitle, date:d, time:tm,
-        needsConfirmation:newNeeds, completed:!!it.completed, completedAt: it.completedAt||null };
+      newItem.date = d;
+      newItem.time = tm;
+      if(document.getElementById("eSub").checked) newItem.subcontractor = true;
     } else if(newKind==="buy"){
-      const q = +document.getElementById("eQty").value || null;
-      newItem = { id: it.id, title:newTitle, qty:q, needsConfirmation:newNeeds,
-        completed:!!it.completed, completedAt: it.completedAt||null };
-    } else {
-      newItem = { id: it.id, title:newTitle, needsConfirmation:newNeeds,
-        completed:!!it.completed, completedAt: it.completedAt||null };
+      newItem.qty = +document.getElementById("eQty").value || null;
+      const nu = normalizeUrl(document.getElementById("eUrl").value);
+      if(nu) newItem.url = nu;
     }
     const oldArr = kind==="schedule"?proj.schedule : kind==="buy"?proj.toBuy : proj.todos;
     const oldIdx = oldArr.findIndex(x=>x.id===it.id);
@@ -2418,6 +2561,7 @@ function syncQuickAddBar(){
   if(cur && state.projects.some(p=>p.id===cur)) proj.value = cur;
   const kind = document.getElementById("qaKind").value;
   document.getElementById("qaSchedRow").style.display = (kind==="schedule") ? "flex" : "none";
+  document.getElementById("qaBuyRow").style.display = (kind==="buy") ? "flex" : "none";
 }
 function bindQuickAdd(){
   document.getElementById("qaKind").addEventListener("change", syncQuickAddBar);
@@ -2437,17 +2581,23 @@ function doQuickAdd(){
   const date = document.getElementById("qaDate").value;
   const time = document.getElementById("qaTime").value;
   const needs = document.getElementById("qaNeeds").checked;
+  const sub = document.getElementById("qaSub").checked;
+  const url = document.getElementById("qaUrl").value;
   const ok = quickAddStructured({
     projectId: proj.value,
     kind, title,
     date: kind==="schedule"?date:null,
     time: kind==="schedule"?(time||null):null,
     needs,
+    subcontractor: kind==="schedule" ? sub : false,
+    url: kind==="buy" ? (url.trim()||null) : null,
   });
   if(ok){
     document.getElementById("qaText").value = "";
     document.getElementById("qaTime").value = "";
     document.getElementById("qaNeeds").checked = false;
+    document.getElementById("qaSub").checked = false;
+    document.getElementById("qaUrl").value = "";
   }
 }
 
