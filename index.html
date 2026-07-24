@@ -467,7 +467,7 @@
       <input type="url" id="qaUrl" placeholder="Product link (optional)" autocomplete="off" inputmode="url" />
     </div>
     <div class="qa-row" id="qaShareRow" style="display:none">
-      <label class="qa-needs"><input type="checkbox" id="qaShareAll" checked /> Share with everyone</label>
+      <label class="qa-needs"><input type="checkbox" id="qaShareAll" /> Share with everyone</label>
     </div>
     <div class="qa-row">
       <input type="text" id="qaText" placeholder="What to add..." autocomplete="off" />
@@ -488,8 +488,8 @@
 const STORE_KEY = "doty.tracker.v1";
 const AUTH_KEY  = "doty.tracker.auth";
 const WORKER_URL = "https://doty-tracker-api.james-5aa.workers.dev";
-const APP_VERSION = "6.0";
-const APP_BUILD_DATE = "2026-05-14";
+const APP_VERSION = "6.1";
+const APP_BUILD_DATE = "2026-07-23";
 const ARCHIVE_AFTER_HOURS = 24;
 
 /* ---------- Cloud sync (multi-user) ---------- */
@@ -832,6 +832,31 @@ async function adminSetUserRole(username, role){
   if(!res.ok) throw new Error(j.error || "set-role failed");
   return j;
 }
+async function adminMintMcpToken(label){
+  const res = await fetch(WORKER_URL + "/admin/mcp-token", {
+    method: "POST",
+    headers: { "content-type":"application/json", "authorization": authHeader() },
+    body: JSON.stringify({ label: label || "" }),
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "mint failed");
+  return j; // { ok, token, url }
+}
+async function adminListMcpTokens(){
+  const res = await fetch(WORKER_URL + "/admin/mcp-tokens", { headers: { "authorization": authHeader() }});
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "list failed");
+  return j.tokens || [];
+}
+async function adminRevokeMcpToken(token){
+  const res = await fetch(WORKER_URL + "/admin/mcp-tokens/" + encodeURIComponent(token), {
+    method: "DELETE",
+    headers: { "authorization": authHeader() },
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "revoke failed");
+  return j;
+}
 async function broadcastNote(projectName, text){
   // Admin or manager — appends a note to every user's same-named project.
   const res = await fetch(WORKER_URL + "/projects/broadcast-note", {
@@ -986,6 +1011,9 @@ function migrate(s){
     const dismissed = new Set(s.dismissedShared);
     for(const p of s.projects){
       if(!p) continue;
+      if(!Array.isArray(p.schedule)) p.schedule = [];
+      if(!Array.isArray(p.todos))    p.todos = [];
+      if(!Array.isArray(p.toBuy))    p.toBuy = [];
       if(!Array.isArray(p.archivedSchedule)) p.archivedSchedule = [];
       if(!Array.isArray(p.archivedTodos))    p.archivedTodos = [];
       if(!Array.isArray(p.archivedToBuy))    p.archivedToBuy = [];
@@ -1651,7 +1679,7 @@ function renderItems(items, opts={}){
     const isShadow = !!it.sharedFrom;
     const isSharedByMe = !isShadow && Array.isArray(it.sharedWith) && it.sharedWith.length > 0;
     if(isShadow) tags.push(`<span class="tag shared">From ${escapeHtml(it.sharedFrom)}</span>`);
-    if(isSharedByMe) tags.push(`<span class="tag shared">Shared with ${escapeHtml(it.sharedWith.join(", "))}</span>`);
+    if(isSharedByMe) tags.push(`<span class="tag shared">Shared with ${escapeHtml(it.sharedWith.map(u=>u==="*"?"everyone":u).join(", "))}</span>`);
     const canShare = !isShadow;  // schedule / todo / to-buy can all be manually shared
     const myRole = sync.user && sync.user.role;
     const canEditShared = isShadow && (myRole === "admin" || myRole === "manager");
@@ -2315,11 +2343,22 @@ function renderTime(){
       mtLog.disabled = true;
       try{
         await logTimeForUser(un, pn, d, h, n);
+        // If we logged time into our own tracker, the server's updatedAt moved.
+        // Refetch so lastRemoteAt stays current — otherwise the next local push
+        // 409s and "Restore my version" could clobber the entry.
+        if(sync.user && un === sync.user.username){
+          const remote = await fetchRemote();
+          if(remote && remote.data && Array.isArray(remote.data.projects)){
+            state = migrate(remote.data);
+            localStorage.setItem(STORE_KEY, JSON.stringify(state));
+            sync.lastRemoteAt = remote.updatedAt;
+          }
+        }
         document.getElementById("mtProj").value = "";
         document.getElementById("mtHours").value = "";
         document.getElementById("mtNote").value = "";
         toast(`Logged ${fmtHours(h)} for ${un}.`);
-        loadTeamReport();
+        render();
       }catch(e){
         alert("Couldn't log time: " + (e.message || e));
       }finally{
@@ -2469,6 +2508,16 @@ function renderSettings(){
         <button id="btnViewAs" class="ghost">View their tracker</button>
       </div>
     </div>
+
+    <div class="h2">Chat connector (MCP)</div>
+    <div class="add-section">
+      <div class="hint">Connect a Claude chat to this tracker. Mint a token, then add the URL as a custom connector in Claude's settings. Revoke a token any time to cut that chat's access.</div>
+      <div id="mcpTokensPanel">Loading…</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+        <input type="text" id="mcpLabel" placeholder="Label (e.g. pinned-chat)" autocapitalize="none" style="flex:1;min-width:140px;padding:8px;border:1px solid var(--line);border-radius:8px" />
+        <button id="btnMintMcp" class="ghost primary">Mint token</button>
+      </div>
+    </div>
     ` : ``}
 
     <div class="h2">Backup & restore</div>
@@ -2581,6 +2630,19 @@ function renderSettings(){
       if(!u){ alert("Pick a user first."); return; }
       await enterViewAs(u);
     });
+    refreshMcpTokensPanel();
+    document.getElementById("btnMintMcp").addEventListener("click", async ()=>{
+      const label = document.getElementById("mcpLabel").value.trim();
+      const btn = document.getElementById("btnMintMcp");
+      btn.disabled = true;
+      try{
+        const r = await adminMintMcpToken(label);
+        document.getElementById("mcpLabel").value = "";
+        await refreshMcpTokensPanel();
+        toast("Token minted — tap Copy URL.");
+      }catch(e){ alert("Couldn't mint token: " + (e.message || e)); }
+      finally{ btn.disabled = false; }
+    });
   }
 
   document.getElementById("btnExport").addEventListener("click", exportData);
@@ -2601,6 +2663,40 @@ function renderSettings(){
     save();
     view = "projects"; openProjectId = null;
     render(); toast("All data cleared.");
+  });
+}
+async function refreshMcpTokensPanel(){
+  const panel = document.getElementById("mcpTokensPanel");
+  if(!panel) return;
+  panel.textContent = "Loading…";
+  let tokens = [];
+  try{ tokens = await adminListMcpTokens(); }
+  catch(e){ panel.textContent = "Couldn't load tokens: " + e.message; return; }
+  if(!tokens.length){ panel.innerHTML = `<div class="hint">No tokens yet. Mint one below.</div>`; return; }
+  panel.innerHTML = tokens.map(t=>{
+    const created = t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "";
+    const url = `${WORKER_URL}/mcp?token=${t.token}`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap">
+      <span style="flex:1;min-width:120px"><b>${escapeHtml(t.label || "(no label)")}</b> <span class="hint">· ${escapeHtml(created)} · …${escapeHtml(t.token.slice(-6))}</span></span>
+      <button class="ghost" data-mcpact="copy" data-url="${escapeHtml(url)}">Copy URL</button>
+      <button class="ghost danger" data-mcpact="revoke" data-token="${escapeHtml(t.token)}">Revoke</button>
+    </div>`;
+  }).join("");
+  panel.querySelectorAll("[data-mcpact]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      if(btn.dataset.mcpact === "copy"){
+        try{
+          await navigator.clipboard.writeText(btn.dataset.url);
+          toast("Connector URL copied.");
+        }catch{
+          prompt("Copy this URL:", btn.dataset.url);
+        }
+      } else if(btn.dataset.mcpact === "revoke"){
+        if(!confirm("Revoke this token? Any chat using it loses access immediately.")) return;
+        try{ await adminRevokeMcpToken(btn.dataset.token); toast("Token revoked."); refreshMcpTokensPanel(); }
+        catch(e){ alert("Revoke failed: " + (e.message || e)); }
+      }
+    });
   });
 }
 async function refreshUsersPanel(){
@@ -2658,7 +2754,15 @@ async function refreshUsersPanel(){
         const np = prompt(`New password for ${un}:`);
         if(!np) return;
         if(np.length < 4){ alert("Password must be at least 4 characters."); return; }
-        try{ await adminResetPassword(un, np); toast(`Reset password for ${un}.`); }
+        try{
+          await adminResetPassword(un, np);
+          // Resetting your own password: update stored creds so the next
+          // request doesn't 401 and sign you out.
+          if(sync.user && un === sync.user.username){
+            saveAuth({ ...sync.user, password: np });
+          }
+          toast(`Reset password for ${un}.`);
+        }
         catch(e){ alert("Reset failed: " + e.message); }
       } else if(act === "delete"){
         if(!confirm(`Delete user "${un}" and all their data? Cannot be undone.`)) return;
@@ -2768,6 +2872,10 @@ async function doQuickAdd(){
     const addBtn = document.getElementById("qaAdd");
     addBtn.disabled = true;
     try{
+      // Flush any pending debounced local edits BEFORE the broadcast, so the
+      // refetch below can't replace state with stale server data (data loss).
+      clearTimeout(sync.pushTimer);
+      await pushRemoteNow();
       await broadcastNote(projObj.name, text);
       const remote = await fetchRemote();
       if(remote && remote.data && Array.isArray(remote.data.projects)){
