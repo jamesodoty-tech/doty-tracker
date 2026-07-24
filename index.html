@@ -623,7 +623,7 @@ textarea.notes{
 const STORE_KEY = "doty.tracker.v1";
 const AUTH_KEY  = "doty.tracker.auth";
 const WORKER_URL = "https://doty-tracker-api.james-5aa.workers.dev";
-const APP_VERSION = "7.1";
+const APP_VERSION = "7.2";
 const APP_BUILD_DATE = "2026-07-23";
 const ARCHIVE_AFTER_HOURS = 24;
 
@@ -2982,6 +2982,18 @@ function bindQuickAdd(){
   const expandQuickbar = ()=>qb.classList.remove("collapsed");
   document.getElementById("qaText").addEventListener("focus", expandQuickbar);
   document.getElementById("qaText").addEventListener("click", expandQuickbar);
+  // Tapping anywhere outside the bar collapses it (Escape works too).
+  document.addEventListener("click", e=>{
+    if(!qb.classList.contains("collapsed") && !qb.contains(e.target)){
+      qb.classList.add("collapsed");
+    }
+  });
+  document.addEventListener("keydown", e=>{
+    if(e.key === "Escape" && !qb.classList.contains("collapsed")){
+      qb.classList.add("collapsed");
+      document.getElementById("qaText").blur();
+    }
+  });
   document.getElementById("qaKind").addEventListener("change", syncQuickAddBar);
   document.getElementById("qaProj").addEventListener("change", e=>{
     qaLastProjectId = e.target.value;
