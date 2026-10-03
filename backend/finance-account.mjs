@@ -159,7 +159,15 @@ export class FinanceAccount {
           if(mutation.action==='replace'){const old=row();if(old.voided)throw new FinanceError('Cannot replace an already voided row.',409);old.voided=true;old.voidedAt=now;old.voidedBy=actor;old.voidReason=mutation.reason;await tx.put('row:'+old.id,old);}
           for(const inputRow of mutation.rows){
             let r=inputRow;if(r.kind==='expense'&&r.clientCharge==='markup'&&mutation.action==='add')r={...r,billingVersion:'2',markupRate:r.markupRate??ledger.expenseDefaults.markupRate,markupBase:r.markupBase??ledger.expenseDefaults.markupBase,clientTaxMode:r.clientTaxMode??ledger.expenseDefaults.clientTaxMode};L.validate(r);
-            const phaseId=phase(r,mutation.action==='stage');
+            // Correcting legacy history must not invent a previously unknown phase.
+            // This exception can only retain the correction target's exact
+            // unassigned phase; new bookings still require a known phase.
+            const correctionTarget=mutation.action==='replace'?ledger.rows.find(x=>x.id===mutation.rowId):null;
+            const retainUnassigned=!!correctionTarget&&!correctionTarget.phaseId&&!r.phaseId&&(correctionTarget.phase||'')===(r.phase||'');
+            // An owner payout can settle the project account without evidence of
+            // a work-phase allocation. Never fabricate one from the balance.
+            const accountPayout=mutation.action==='add'&&r.kind==='workerPayout'&&!r.phaseId&&!(r.phase||'').trim();
+            const phaseId=retainUnassigned||accountPayout?null:phase(r,mutation.action==='stage');
             const personId=person(r,mutation.action==='stage',mutation.action==='replace'&&ledger.rows.find(x=>x.id===mutation.rowId)?.personId===r.personId);
             if(mutation.action==='add'&&r.kind==='labour'&&r.currency!=='CAD')throw new FinanceError('New labour uses CAD.');
             let rateFields={};if(mutation.action==='add'&&r.kind==='labour'&&r.payRate===undefined){const rate=L.wageFor(ledger.people.find(p=>p.id===personId),r.unit,r.currency,r.date);rateFields={payRate:rate.value,...(rate.value!==''?{wageScheduleId:rate.scheduleId}:{} )};}
