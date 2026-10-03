@@ -1,0 +1,114 @@
+const assert=require('node:assert/strict');const fs=require('node:fs');
+const FinanceClient=require('./finance-client.js');
+(async()=>{
+ const {FinanceAccount,financeAccess,callFinanceTool,normalizeRow,FINANCE_TOOLS}=await import('./backend/finance-account.mjs');
+ const {localNamespace}=await import('./backend/local-storage.mjs');
+ const {default:worker}=await import('./backend/worker-review.mjs');
+ const namespace=localNamespace(FinanceAccount);
+ const project={id:'owned',name:'Demo project',notes:'Original synthetic note preserved',schedule:[],todos:[],toBuy:[]};
+ const original={projects:[project],timeEntries:[{id:'time-fixture',projectId:'owned',date:'2026-09-01',hours:2,note:'Existing time'}]};
+ const salt='synthetic-test-salt';const fixturePassword='synthetic-test-only';
+ const hash=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+fixturePassword))).toString('hex');
+ const values=new Map([['data:owner',JSON.stringify({data:original,updatedAt:'fixture-version'})],['data:other',JSON.stringify({data:{projects:[{...project,id:'other-owned'}]}})],['users',JSON.stringify({owner:{salt,hash,role:'admin'},other:{salt,hash,role:'manager'},crew:{salt,hash,role:'user'}})],['mcp:synthetic-token',JSON.stringify({username:'owner'})]]);
+ const kv={get:async k=>values.get(k)||null,list:async({prefix=''})=>({keys:[...values.keys()].filter(k=>k.startsWith(prefix)).map(name=>({name})),list_complete:true}),put:async()=>{throw Error('Unexpected KV write');}};
+ const env={DOTY_KV:kv,DOTY_PASSWORD:'synthetic-environment-fixture',ENABLE_FINANCE_REVIEW:'true',FINANCE_ACCOUNTS:namespace};
+ const owner={username:'owner',role:'admin',env};
+ async function seedPhases(ns){const account=ns.get(ns.idFromName(JSON.stringify(['owner','owned'])));await account.storage.transaction(async tx=>{await tx.put('phase-schema',1);await tx.put('phase:phase-bath',{id:'phase-bath',name:'Bathroom'});await tx.put('phase:phase-kitchen',{id:'phase-kitchen',name:'Kitchen'});});}
+ await seedPhases(namespace);
+ const directory=namespace.get(namespace.idFromName(JSON.stringify({kind:'people',owner:'owner'})));await directory.storage.transaction(tx=>tx.put('person:person-constructor',{id:'person-constructor',name:'constructor'}));
+ const base={kind:'expense',date:'2026-09-01',phase:'Bathroom',phaseId:'phase-bath',currency:'CAD',vendor:'Demo supplier',category:'Materials',amount:'100.00',tax:'',clientCharge:'atCost',purchasedBy:'project',provenance:{reference:'Synthetic receipt 1',text:'Demo purchase',sourceId:'source-receipt-1'}};
+ const mutation=(action,revision,operationId,extra)=>({project_id:'owned',mutation:{action,previousRevision:revision,operationId,...extra}});
+ const write=(m,channel='mcp')=>financeAccess(owner,m,true,channel);
+ const read=()=>financeAccess(owner,{project_id:'owned'},false);
+ await assert.rejects(financeAccess({...owner,role:'user'},{project_id:'owned'},false),e=>e.status===403);
+ await assert.rejects(financeAccess({...owner,username:'other'},{project_id:'owned'},false),e=>e.status===404);
+ await assert.rejects(financeAccess({...owner,env:{...env,ENABLE_FINANCE_REVIEW:'false'}},{project_id:'owned'},false),e=>e.status===503);
+ await assert.rejects(financeAccess({...owner,env:{...env,FINANCE_ACCOUNTS:undefined}},{project_id:'owned'},false),e=>e.status===503);
+ assert.throws(()=>normalizeRow({...base,id:'injected'}),/Unknown row field/);
+ assert.throws(()=>normalizeRow({...base,sharedWith:['*']}),/Unknown row field/);
+ assert.throws(()=>normalizeRow({...base,provenance:{reference:'Demo'}}),/source text/);
+ const first=await callFinanceTool('record_finance_rows',{project_id:'owned',operation_id:'operation-first',previous_revision:0,rows:[base]},owner);
+ assert.equal(first.ledger.revision,1);assert.equal(first.ledger.totals.CAD.accountBalance,10000);
+ const replay=await callFinanceTool('record_finance_rows',{rows:[base],previous_revision:0,operation_id:'operation-first',project_id:'owned'},owner);
+ assert.equal(replay.replayed,true);assert.equal(replay.ledger.rows.length,1);
+ await assert.rejects(write(mutation('add',0,'operation-first',{rows:[{...base,amount:'110.00'}]})),e=>e.status===409);
+ await assert.rejects(write(mutation('add',0,'operation-stale',{rows:[base]})),e=>e.status===409);
+ const p=await write(mutation('stage',1,'operation-import',{rows:[base]}));
+ await assert.rejects(write(mutation('accept',2,'operation-approve',{proposalId:p.result.proposalIds[0],confirmed:true}),'browser'),/Source occurrence already accepted/);
+ await assert.rejects(write(mutation('accept',2,'operation-mcpaccept',{proposalId:p.result.proposalIds[0],confirmed:true})),e=>e.status===403);
+ const running={...base,provenance:{reference:'Synthetic total',text:'Running total 100.00',sourceId:'snapshot-1'}};
+ await assert.rejects(write(mutation('add',2,'operation-snapshot',{rows:[running]})),/Running totals/);
+ const staged=await write(mutation('stage',2,'operation-stage-total',{rows:[running],checkpoints:[{metric:'expenses',currency:'CAD',amount:'100.00',reference:'Synthetic snapshot',throughDate:'2026-09-01'}]}));
+ await assert.rejects(write(mutation('accept',3,'operation-total-accept',{proposalId:staged.result.proposalIds[0],confirmed:true}),'browser'),/evidence only/);
+ const correction={...base,amount:'80.00',provenance:{reference:'Synthetic correction',text:'Correct previous purchase to 80 instead',sourceId:'source-receipt-1'}};
+ const cq=await write(mutation('stage',3,'operation-stage-correction',{rows:[correction]}));
+ await assert.rejects(write(mutation('accept',4,'operation-bad-correction',{proposalId:cq.result.proposalIds[0],confirmed:true}),'browser'),/exact target/);
+ const corrected=await callFinanceTool('correct_finance_row',{project_id:'owned',operation_id:'operation-correct',previous_revision:4,row_id:first.result.rowIds[0],reason:'Receipt correction',row:correction},owner);
+ assert.equal(corrected.ledger.totals.CAD.accountBalance,8000);assert.equal(corrected.ledger.rows.filter(r=>!r.voided).length,1);assert.equal(corrected.ledger.rows[0].provenance.text,'Demo purchase');
+ await assert.rejects(write(mutation('unvoid',5,'operation-restore-old',{rowId:first.result.rowIds[0],reason:'Demo restore'}),'browser'),/Active replacement|Source occurrence already active/);
+ const labour={kind:'labour',phase:'Kitchen',phaseId:'phase-kitchen',currency:'CAD',date:'',person:'constructor',personId:'person-constructor',unit:'days',quantity:'0.5',billRate:'500.00',payRate:'350.00',provenance:{reference:'Synthetic day',text:'Half day',occurrence:'day-A'}};
+ const days=await write(mutation('add',5,'operation-days',{rows:[labour,{...labour,provenance:{...labour.provenance,occurrence:'day-B'}}]}));
+ assert.equal(days.ledger.totals.CAD.billable,50000);assert.equal(days.ledger.totals.CAD.workers['id:person-constructor'].earned,35000);
+ const race=await Promise.allSettled([write(mutation('add',6,'operation-race-one',{rows:[{...base,provenance:{...base.provenance,sourceId:'race-1'}}]})),write(mutation('add',6,'operation-race-two',{rows:[{...base,provenance:{...base.provenance,sourceId:'race-2'}}]}))]);
+ assert.equal(race.filter(r=>r.status==='fulfilled').length,1);assert.equal(race.find(r=>r.status==='rejected').reason.status,409);
+ assert.equal((await read()).revision,7);
+ // An invalid second row rolls back a first row and every audit/revision write.
+ const before=JSON.stringify(await read());
+ await assert.rejects(write(mutation('add',7,'operation-rollback',{rows:[{...base,provenance:{...base.provenance,sourceId:'rollback'}},{...base,amount:'1.001'}]})));
+ assert.equal(JSON.stringify(await read()),before);
+ // Force an error after the first tx.put: both same-source rows are individually valid.
+ await assert.rejects(write(mutation('add',7,'operation-partial-rollback',{rows:[{...base,provenance:{...base.provenance,sourceId:'rollback-twice'}},{...base,provenance:{...base.provenance,sourceId:'rollback-twice'}}]})),/already accepted/);
+ assert.equal(JSON.stringify(await read()),before);
+ // A failed correction must also undo the old-row void in the same transaction.
+ await assert.rejects(callFinanceTool('correct_finance_row',{project_id:'owned',operation_id:'operation-failed-replace',previous_revision:7,row_id:corrected.result.rowIds[0],reason:'Bad snapshot correction',row:{...correction,provenance:{...correction.provenance,text:'Running total 100.00'}}},owner),/Running totals/);
+ assert.equal(JSON.stringify(await read()),before);
+
+ const nonbill=await write(mutation('add',7,'operation-client-buy',{rows:[{...base,amount:'30.00',clientCharge:'none',purchasedBy:'client',provenance:{reference:'Client receipt',text:'Client supplied tile',sourceId:'client-1'}}]}));
+ assert.equal(nonbill.ledger.totals.CAD.expenses-nonbill.ledger.totals.CAD.chargeableExpenses,3000);
+ // Actual Worker HTTP and MCP JSON-RPC paths, using synthetic auth fixtures only.
+ const auth='Basic '+Buffer.from('owner:'+fixturePassword).toString('base64');
+ let response=await worker.fetch(new Request('https://local.invalid/finance/review?project_id=owned',{headers:{authorization:auth}}),env);
+ assert.equal(response.status,200);assert.equal((await response.json()).revision,8);
+ response=await worker.fetch(new Request('https://local.invalid/finance/review?as=other&project_id=owned',{headers:{authorization:auth}}),env);assert.equal(response.status,403);
+ response=await worker.fetch(new Request('https://local.invalid/data',{headers:{authorization:auth}}),env);const tracker=await response.json();assert.equal(tracker.data.projects[0].notes,project.notes);assert.equal(tracker.data.timeEntries[0].hours,2);assert(!JSON.stringify(tracker).includes('payRate'));
+ async function rpc(name,args,environment=env){const res=await worker.fetch(new Request('https://local.invalid/mcp',{method:'POST',headers:{authorization:'Bearer synthetic-token','content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:name==='tools/list'?'tools/list':'tools/call',params:{name,arguments:args}})}),environment);return res.json();}
+ response=await worker.fetch(new Request('https://local.invalid/finance/people',{headers:{authorization:auth}}),env);assert.equal(response.status,200);assert.equal((await response.json()).people[0].id,'person-constructor');
+ response=await worker.fetch(new Request('https://local.invalid/finance/people?as=other',{headers:{authorization:auth}}),env);assert.equal(response.status,403);
+ response=await worker.fetch(new Request('https://local.invalid/finance/people',{headers:{authorization:'Basic '+Buffer.from('crew:'+fixturePassword).toString('base64')}}),env);assert.equal(response.status,403);
+ const legacyValues=new Map(values);const legacyEnv={...env,DOTY_KV:{...kv,get:async k=>legacyValues.get(k)||null,put:async(k,v)=>legacyValues.set(k,v)}};
+ const oldHours=await rpc('log_time',{project:'Demo project',hours:2.5,date:'2026-10-02',note:'Synthetic legacy compatibility'},legacyEnv);assert(!oldHours.error);const savedHours=JSON.parse(legacyValues.get('data:owner')).data.timeEntries;assert.equal(savedHours.length,2);assert.equal(savedHours[0].hours,2);assert.equal(savedHours[1].hours,2.5);assert(!savedHours[1].personId);assert(!(await rpc('time_summary',{scope:'month'},legacyEnv)).error);assert.equal((await read()).revision,8);
+ const listed=await rpc('tools/list',{});assert.equal(listed.result.tools.length,37);assert(listed.result.tools.some(t=>t.name==='log_time'));assert.equal(FINANCE_TOOLS.length,20);
+ assert((await rpc('list_projects',{})).result.content[0].text.includes('project_id: owned'));
+ const overview=await rpc('get_project',{project:'Demo project'});assert(overview.result.content[0].text.includes(project.notes));assert(!overview.result.content[0].text.includes('payRate'));
+ const mcpRow={...base,amount:'10.25',provenance:{reference:'Synthetic chat',text:'Materials purchase 10.25',sourceId:'chat-1'}};
+ const logged=await rpc('record_finance_rows',{project_id:'owned',operation_id:'operation-rpc-log',previous_revision:8,rows:[mcpRow]});assert(!logged.error);assert.equal(JSON.parse(logged.result.content[0].text).ledger.revision,9);
+ assert.equal(JSON.parse((await rpc('get_finance_review',{project_id:'owned'})).result.content[0].text).revision,9);
+ // Browser transport loses response after commit: retry must replay, not double book.
+ const memory=new Map();const storage={getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,v),removeItem:k=>memory.delete(k)};let failAfterCommit=true;
+ const client=new FinanceClient({storage,newId:()=> 'operation-browser-retry',request:async(p,m)=>{const result=await financeAccess(owner,m?{project_id:p.id,mutation:m}:{project_id:p.id},!!m,'browser');if(m&&failAfterCommit){failAfterCommit=false;throw Error('Synthetic lost response');}return result;}});
+ await client.load('owner:owned',{id:'owned'});
+ await assert.rejects(client.mutate('owner:owned',{id:'owned'},9,{action:'add',rows:[{...base,amount:'3.50',provenance:{reference:'Browser fixture',text:'Demo purchase',sourceId:'browser-retry'}}]}),/lost response/);
+ assert(client.pending('owner:owned'));const retried=await client.retry('owner:owned',{id:'owned'});assert.equal(retried.replayed,true);assert.equal(retried.ledger.revision,10);assert.equal(retried.ledger.rows.filter(r=>r.provenance.sourceId==='browser-retry').length,1);assert.equal(client.pending('owner:owned'),null);
+ const invalidClient=new FinanceClient({storage,newId:()=> 'operation-browser-invalid',request:async()=>{const e=Error('Definitive validation error');e.status=400;throw e;}});
+ await assert.rejects(invalidClient.mutate('invalid:fixture',{id:'owned'},0,{action:'add',rows:[]}),/validation/);assert.equal(invalidClient.pending('invalid:fixture'),null);
+ const other=await financeAccess({...owner,username:'other',role:'manager'},{project_id:'other-owned'},false);assert.equal(other.rows.length,0);assert.equal(other.revision,0);
+ // Re-review regressions: stage without sourceId, summary wording and protocol bypass.
+ const fresh={...owner,env:{...env,FINANCE_ACCOUNTS:localNamespace(FinanceAccount)}};
+ await seedPhases(fresh.env.FINANCE_ACCOUNTS);
+ const rawSource={...base,provenance:{reference:'Synthetic receipt no ID',text:'Synthetic purchase 100.00'}};
+ const stageArgs={project_id:'owned',operation_id:'stage-missing-source-first',previous_revision:0,rows:[rawSource]};
+ const stagedFirst=await callFinanceTool('stage_finance_rows',stageArgs,fresh);
+ const acceptedFirst=await financeAccess(fresh,mutation('accept',1,'accept-missing-source-first',{proposalId:stagedFirst.result.proposalIds[0],confirmed:true}),true,'browser');
+ const stagedAgain=await callFinanceTool('stage_finance_rows',{...stageArgs,operation_id:'stage-missing-source-again',previous_revision:2},fresh);
+ assert.equal(stagedFirst.ledger.proposals[0].row.provenance.sourceId,stagedAgain.ledger.proposals[0].row.provenance.sourceId);
+ await assert.rejects(financeAccess(fresh,mutation('accept',3,'accept-missing-source-again',{proposalId:stagedAgain.result.proposalIds[0],confirmed:true}),true,'browser'),/already accepted/);
+ assert.equal((await financeAccess(fresh,{project_id:'owned'},false)).totals.CAD.accountBalance,10000);
+ await assert.rejects(financeAccess(fresh,mutation('add',3,'extraneous-row-id-add',{rows:[acceptedFirst.ledger.rows[0]],rowId:acceptedFirst.result.rowIds[0]}),true,'browser'),/Unknown mutation field/);
+ const totalToDate={...rawSource,amount:'500.00',provenance:{reference:'Synthetic summary',text:'Materials total to date 500.00'}};
+ await assert.rejects(financeAccess(fresh,mutation('add',3,'materials-total-direct',{rows:[totalToDate]}),true,'browser'),/Running totals/);
+ const totalProposal=await callFinanceTool('stage_finance_rows',{...stageArgs,operation_id:'materials-total-stage',previous_revision:3,rows:[totalToDate]},fresh);
+ assert.equal(totalProposal.ledger.proposals.at(-1).row.recordType,'evidence');
+ await assert.rejects(financeAccess(fresh,mutation('accept',4,'materials-total-accept',{proposalId:totalProposal.result.proposalIds[0],confirmed:true}),true,'browser'),/evidence only/);
+ assert.equal(values.get('data:owner'),JSON.stringify({data:original,updatedAt:'fixture-version'}));
+ console.log('PASS: authenticated Worker and 37-tool MCP, browser/MCP shared store, role/ownership/pay privacy, stable retries, concurrent conflict, rollback, corrections, snapshot rejection, reimport identity, distinct undated days, client-purchased cost, original notes/time state.');
+})().catch(e=>{console.error(e);process.exitCode=1});

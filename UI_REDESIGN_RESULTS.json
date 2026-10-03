@@ -1,0 +1,72 @@
+{
+  "date": "2026-10-03T04:33:57.542Z",
+  "screens": [
+    {
+      "view": "calendar",
+      "width": 393,
+      "height": 852,
+      "doc": 378
+    },
+    {
+      "view": "projects",
+      "width": 393,
+      "height": 852,
+      "doc": 378
+    },
+    {
+      "view": "labour",
+      "width": 393,
+      "height": 852,
+      "doc": 378
+    },
+    {
+      "view": "contacts",
+      "width": 393,
+      "height": 852,
+      "doc": 378
+    },
+    {
+      "view": "settings",
+      "width": 393,
+      "height": 852,
+      "doc": 378
+    },
+    {
+      "view": "calendar",
+      "width": 430,
+      "height": 932,
+      "doc": 415
+    },
+    {
+      "view": "projects",
+      "width": 430,
+      "height": 932,
+      "doc": 415
+    },
+    {
+      "view": "labour",
+      "width": 430,
+      "height": 932,
+      "doc": 415
+    },
+    {
+      "view": "contacts",
+      "width": 430,
+      "height": 932,
+      "doc": 415
+    },
+    {
+      "view": "settings",
+      "width": 430,
+      "height": 932,
+      "doc": 415
+    }
+  ],
+  "calendarDST": true,
+  "archiveRestore": true,
+  "expenseHST": "1299.50",
+  "fullBackupRoundtrip": true,
+  "lostResponseRecovery": true,
+  "v7Conversion": true,
+  "browserErrors": []
+}

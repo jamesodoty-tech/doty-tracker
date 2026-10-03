@@ -1,0 +1,29 @@
+# Review-only example. Do not deploy this file without separately approved
+# namespace/class migration and verified existing bindings/secrets.
+name = "doty-tracker-api-review"
+main = "worker-review.mjs"
+compatibility_date = "2026-10-02"
+
+[vars]
+ENABLE_FINANCE_REVIEW = "true"
+# Fresh V8 owner coordinator mode: complete inventory and atomic restore.
+# Enable ONLY with the approved fresh V8 cutover; split legacy data is untouched.
+OWNER_ACCOUNT_MODE = "fresh-v8"
+# Existing KV remains visible until this owner’s approved full restore commits.
+OWNER_ACTIVATE_ON_RESTORE = "true"
+# Preserve the existing permitted ALLOWED_ORIGIN at deployment.
+
+[[durable_objects.bindings]]
+name = "FINANCE_ACCOUNTS"
+class_name = "FinanceAccount"
+
+[[migrations]]
+tag = "finance-account-v1"
+new_sqlite_classes = ["FinanceAccount"]
+
+# The original routes still require DOTY_KV plus the existing DOTY_PASSWORD
+# secret. Preserve existing configuration; no namespace IDs/secrets are copied
+# or provisioned here. Use an isolated test KV for Cloudflare-runtime QA.
+# [[kv_namespaces]]
+# binding = "DOTY_KV"
+# id = "<approved existing-or-test namespace ID>"

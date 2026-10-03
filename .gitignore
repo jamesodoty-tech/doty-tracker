@@ -1,0 +1,5 @@
+.preview/
+.migration-private/
+.env
+.env.*
+*.applescript
